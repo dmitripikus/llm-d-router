@@ -198,15 +198,28 @@ func NewDisaggProfileHandler(decodeProfile, prefillProfile, encodeProfile string
 }
 
 // isConditionalDecode reports whether the request was issued by the coordinator
-// as a speculative early-decode attempt. When true, prefill and encode
-// stages must be skipped, and the chosen decode worker must already have a
-// non-empty KV-cache match for this prompt — otherwise EPP itself returns 412
-// so the coordinator restarts the pipeline.
+// as a speculative early-decode attempt. The signal is the standard HTTP
+// "Prefer: if-available" preference (RFC 7240); when present, prefill and
+// encode stages must be skipped, and the chosen decode worker must already
+// have a non-empty KV-cache match for this prompt — otherwise EPP itself
+// returns 412 so the coordinator restarts the pipeline.
+//
+// Per RFC 7240 the Prefer header value is a comma-separated list of preference
+// tokens, each with optional ";"-delimited parameters. Match the bare
+// "if-available" token case-insensitively, ignoring surrounding whitespace and
+// any other tokens that may appear alongside it.
 func isConditionalDecode(request *scheduling.InferenceRequest) bool {
 	if request == nil || request.Headers == nil {
 		return false
 	}
-	return request.Headers[routing.EPPPhaseHeader] == routing.EPPPhaseConditionalDecode
+	for _, pref := range strings.Split(request.Headers[routing.PreferHeader], ",") {
+		// Drop any "; param=value" attached to the token before comparing.
+		token, _, _ := strings.Cut(pref, ";")
+		if strings.EqualFold(strings.TrimSpace(token), routing.PreferIfAvailable) {
+			return true
+		}
+	}
+	return false
 }
 
 // hasCachedPrefix reports whether the endpoint has at least one matching prefix

@@ -1357,14 +1357,39 @@ func TestIsConditionalDecode(t *testing.T) {
 		{"empty headers", &scheduling.InferenceRequest{Headers: map[string]string{}}, false},
 		{"unrelated header", &scheduling.InferenceRequest{Headers: map[string]string{"x-other": "v"}}, false},
 		{
-			"phase=decode (not conditional)",
-			&scheduling.InferenceRequest{Headers: map[string]string{routing.EPPPhaseHeader: "decode"}},
+			"prefer=return=minimal (not if-available)",
+			&scheduling.InferenceRequest{Headers: map[string]string{routing.PreferHeader: "return=minimal"}},
 			false,
 		},
 		{
-			"phase=conditional-decode",
-			&scheduling.InferenceRequest{Headers: map[string]string{routing.EPPPhaseHeader: routing.EPPPhaseConditionalDecode}},
+			"prefer=if-available",
+			&scheduling.InferenceRequest{Headers: map[string]string{routing.PreferHeader: routing.PreferIfAvailable}},
 			true,
+		},
+		{
+			"prefer=If-Available (case insensitive)",
+			&scheduling.InferenceRequest{Headers: map[string]string{routing.PreferHeader: "If-Available"}},
+			true,
+		},
+		{
+			"prefer with multiple tokens including if-available",
+			&scheduling.InferenceRequest{Headers: map[string]string{routing.PreferHeader: "return=minimal, if-available"}},
+			true,
+		},
+		{
+			"prefer=if-available; param=v (parameter ignored)",
+			&scheduling.InferenceRequest{Headers: map[string]string{routing.PreferHeader: "if-available;param=v"}},
+			true,
+		},
+		{
+			"prefer=if-available with leading whitespace",
+			&scheduling.InferenceRequest{Headers: map[string]string{routing.PreferHeader: "  if-available  "}},
+			true,
+		},
+		{
+			"prefer with similar but distinct token",
+			&scheduling.InferenceRequest{Headers: map[string]string{routing.PreferHeader: "if-available-but-different"}},
+			false,
 		},
 	}
 	for _, tt := range tests {
@@ -1374,12 +1399,12 @@ func TestIsConditionalDecode(t *testing.T) {
 	}
 }
 
-// withConditionalDecodeHeader returns a new request copy with the conditional-decode header set.
+// withConditionalDecodeHeader sets the Prefer: if-available header that triggers conditional-decode.
 func withConditionalDecodeHeader(req *scheduling.InferenceRequest) *scheduling.InferenceRequest {
 	if req.Headers == nil {
 		req.Headers = map[string]string{}
 	}
-	req.Headers[routing.EPPPhaseHeader] = routing.EPPPhaseConditionalDecode
+	req.Headers[routing.PreferHeader] = routing.PreferIfAvailable
 	return req
 }
 
