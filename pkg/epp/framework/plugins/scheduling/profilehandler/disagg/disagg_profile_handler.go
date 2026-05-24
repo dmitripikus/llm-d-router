@@ -14,7 +14,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	errcommon "github.com/llm-d/llm-d-router/pkg/common/error"
 	"github.com/llm-d/llm-d-router/pkg/common/routing"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/interface/plugin"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/interface/requestcontrol"
@@ -197,50 +196,6 @@ func NewDisaggProfileHandler(decodeProfile, prefillProfile, encodeProfile string
 	)
 }
 
-// isConditionalDecode reports whether the request was issued by the coordinator
-// as a speculative early-decode attempt. The signal is the standard HTTP
-// "Prefer: if-available" preference (RFC 7240); when present, prefill and
-// encode stages must be skipped, and the chosen decode worker must already
-// have a non-empty KV-cache match for this prompt — otherwise EPP itself
-// returns 412 so the coordinator restarts the pipeline.
-//
-// Per RFC 7240 the Prefer header value is a comma-separated list of preference
-// tokens, each with optional ";"-delimited parameters. Match the bare
-// "if-available" token case-insensitively, ignoring surrounding whitespace and
-// any other tokens that may appear alongside it.
-func isConditionalDecode(request *scheduling.InferenceRequest) bool {
-	if request == nil || request.Headers == nil {
-		return false
-	}
-	for _, pref := range strings.Split(request.Headers[routing.PreferHeader], ",") {
-		// Drop any "; param=value" attached to the token before comparing.
-		token, _, _ := strings.Cut(pref, ";")
-		if strings.EqualFold(strings.TrimSpace(token), routing.PreferIfAvailable) {
-			return true
-		}
-	}
-	return false
-}
-
-// hasCachedPrefix reports whether the endpoint has at least one matching prefix
-// block in its KV cache, as observed by a prefix-cache scorer. The match info
-// is attached to the endpoint by the precise/approximate-prefix scorers during
-// the decode profile run.
-func hasCachedPrefix(endpoint scheduling.Endpoint) bool {
-	if endpoint == nil {
-		return false
-	}
-	raw, ok := endpoint.Get(attrprefix.PrefixCacheMatchInfoDataKey.String())
-	if !ok || raw == nil {
-		return false
-	}
-	info, ok := raw.(*attrprefix.PrefixCacheMatchInfo)
-	if !ok {
-		return false
-	}
-	return info.MatchBlocks() > 0
-}
-
 // ── Shared implementation ───────────────────────────────────────────────────
 
 // compile-time assertions
@@ -334,10 +289,12 @@ func (h *Handler) Pick(ctx context.Context, request *scheduling.InferenceRequest
 	}
 
 	// Conditional-decode short-circuit: when the coordinator marks the request
-	// as a speculative early decode (EPP-Phase: conditional-decode), the worker
-	// will either serve the response from its KV cache or return 412. Encode
-	// and prefill are pointless in either case.
-	if isConditionalDecode(request) {
+	// with "Prefer: if-available", the cache-availability gate in the director
+	// will already have rejected it with 412 if no decode worker has the prompt
+	// cached. By the time we reach this point the request is going through, but
+	// running encode or prefill would defeat the whole point of conditional
+	// decode — the prompt is already cached on the chosen decode pod.
+	if request != nil && routing.IsConditionalDecode(request.Headers) {
 		span.SetAttributes(attribute.String("llm_d.profile_handler.decision", "skip_encode_prefill_conditional_decode"))
 		metrics.RecordDisaggDecision(request.TargetModel, metrics.DisaggDecisionType(false, false))
 		return map[string]scheduling.SchedulerProfile{}
@@ -394,16 +351,6 @@ func (h *Handler) ProcessResults(
 	decodeRunResults := profileResults[h.decodeProfile]
 	if decodeRunResults == nil || len(decodeRunResults.TargetEndpoints) == 0 {
 		return nil, errors.New("failed to find available decode workers")
-	}
-
-	// Conditional-decode: forward to the worker only if its KV cache already
-	// has a non-empty prefix match for this prompt. Otherwise surface 412 so
-	// the coordinator restarts the pipeline at encode/prefill/decode.
-	if isConditionalDecode(request) && !hasCachedPrefix(decodeRunResults.TargetEndpoints[0]) {
-		return nil, errcommon.Error{
-			Code: errcommon.PreconditionFailed,
-			Msg:  "no decode worker has the requested KV cache",
-		}
 	}
 
 	updatedResults := map[string]*scheduling.ProfileRunResult{}

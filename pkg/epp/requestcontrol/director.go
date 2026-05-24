@@ -37,6 +37,7 @@ import (
 	errcommon "github.com/llm-d/llm-d-router/pkg/common/error"
 	logutil "github.com/llm-d/llm-d-router/pkg/common/observability/logging"
 	reqcommon "github.com/llm-d/llm-d-router/pkg/common/request"
+	"github.com/llm-d/llm-d-router/pkg/common/routing"
 	"github.com/llm-d/llm-d-router/pkg/epp/datalayer"
 	"github.com/llm-d/llm-d-router/pkg/epp/datastore"
 	"github.com/llm-d/llm-d-router/pkg/epp/flowcontrol/contracts"
@@ -44,6 +45,7 @@ import (
 	fwkrc "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/requestcontrol"
 	fwkrh "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/requesthandling"
 	fwksched "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/scheduling"
+	attrprefix "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/datalayer/attribute/prefix"
 	"github.com/llm-d/llm-d-router/pkg/epp/handlers"
 	"github.com/llm-d/llm-d-router/pkg/epp/metadata"
 	"github.com/llm-d/llm-d-router/pkg/epp/metrics"
@@ -56,6 +58,35 @@ const (
 	dataProducerTimeout       = 400 * time.Millisecond
 	responseBodyQueueCapacity = 100
 )
+
+// primaryEndpointHasCachedPrefix reports whether the primary profile's chosen
+// endpoint has at least one matching prefix block in its KV cache, as observed
+// by a precise/approximate-prefix scorer during the decode profile run. It
+// returns false when the result is missing, the primary profile produced no
+// endpoint, the endpoint carries no PrefixCacheMatchInfo attribute, or the
+// recorded match has zero blocks.
+func primaryEndpointHasCachedPrefix(result *fwksched.SchedulingResult) bool {
+	if result == nil {
+		return false
+	}
+	primary, ok := result.ProfileResults[result.PrimaryProfileName]
+	if !ok || primary == nil || len(primary.TargetEndpoints) == 0 {
+		return false
+	}
+	endpoint := primary.TargetEndpoints[0]
+	if endpoint == nil {
+		return false
+	}
+	raw, ok := endpoint.Get(attrprefix.PrefixCacheMatchInfoDataKey.String())
+	if !ok || raw == nil {
+		return false
+	}
+	info, ok := raw.(*attrprefix.PrefixCacheMatchInfo)
+	if !ok {
+		return false
+	}
+	return info.MatchBlocks() > 0
+}
 
 // Datastore defines the interface required by the Director.
 type Datastore interface {
@@ -254,13 +285,30 @@ func (d *Director) HandleRequest(ctx context.Context, reqCtx *handlers.RequestCo
 
 	result, err := d.scheduler.Schedule(ctx, reqCtx.SchedulingRequest, snapshotOfCandidatePods)
 	if err != nil {
-		// Preserve the scheduler's status code when it returned a typed errcommon.Error
-		// (e.g. PreconditionFailed for conditional-decode cache misses). Otherwise
-		// fall back to ResourceExhausted, the "no endpoint" status.
+		// Preserve typed errcommon.Error from the scheduler so its status code
+		// (e.g. PreconditionFailed) reaches Envoy intact. Other errors fall
+		// through to ResourceExhausted, the legacy "no endpoint" status.
 		if e, ok := err.(errcommon.Error); ok {
 			return reqCtx, e
 		}
 		return reqCtx, errcommon.Error{Code: errcommon.ResourceExhausted, Msg: fmt.Errorf("failed to find target endpoint: %w", err).Error()}
+	}
+
+	// Conditional-decode gate (RFC 7240 "Prefer: if-available"). The coordinator
+	// uses this header to mark a speculative early-decode attempt: forward to a
+	// decode worker only if its KV cache already covers the prompt, otherwise
+	// surface 412 Precondition Failed so the coordinator restarts the pipeline
+	// at encode/prefill/decode. Lives in the director (not in a profile handler)
+	// so it fires regardless of which profile handler is configured.
+	if routing.IsConditionalDecode(reqCtx.Request.Headers) {
+		if !primaryEndpointHasCachedPrefix(result) {
+			logger.V(logutil.DEBUG).Info("conditional-decode: chosen decode worker has no cached prefix, returning 412")
+			return reqCtx, errcommon.Error{
+				Code: errcommon.PreconditionFailed,
+				Msg:  "no decode worker has the requested KV cache",
+			}
+		}
+		logger.V(logutil.DEBUG).Info("conditional-decode: chosen decode worker has cached prefix, forwarding")
 	}
 
 	reqCtx.SchedulingRequest.SchedulingResult = result

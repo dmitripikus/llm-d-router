@@ -4,7 +4,10 @@
 //revive:disable:var-naming
 package routing
 
-import "net/url"
+import (
+	"net/url"
+	"strings"
+)
 
 const (
 	// PrefillEndpointHeader is the header name used to indicate Prefill worker <ip:port>
@@ -40,4 +43,27 @@ func StripScheme(endpoint string) string {
 		return endpoint // not a valid URL, return as-is
 	}
 	return u.Host
+}
+
+// IsConditionalDecode reports whether the request headers carry the standard
+// HTTP "Prefer: if-available" preference (RFC 7240). It is the marker the
+// coordinator uses to flag a speculative early-decode attempt: route to a
+// decode worker only if its KV cache already covers the prompt; otherwise EPP
+// surfaces 412 Precondition Failed so the coordinator restarts the pipeline.
+//
+// Per RFC 7240 the Prefer header value is a comma-separated list of preference
+// tokens, each with optional ";"-delimited parameters. This function matches
+// the bare "if-available" token case-insensitively, ignoring surrounding
+// whitespace, parameters, and any other tokens that may appear alongside it.
+//
+// Headers are expected to be lowercased keys (EPP receives them that way from
+// ext-proc; see pkg/epp/handlers/request.go).
+func IsConditionalDecode(headers map[string]string) bool {
+	for _, pref := range strings.Split(headers[PreferHeader], ",") {
+		token, _, _ := strings.Cut(pref, ";")
+		if strings.EqualFold(strings.TrimSpace(token), PreferIfAvailable) {
+			return true
+		}
+	}
+	return false
 }

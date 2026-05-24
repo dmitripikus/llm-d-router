@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 
-	errcommon "github.com/llm-d/llm-d-router/pkg/common/error"
 	"github.com/llm-d/llm-d-router/pkg/common/routing"
 	fwkdl "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/datalayer"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/interface/plugin"
@@ -1346,59 +1345,6 @@ func TestBothProfileAndHeadersHandlerPreRequest(t *testing.T) {
 
 // ── Conditional-decode tests ────────────────────────────────────────────────
 
-func TestIsConditionalDecode(t *testing.T) {
-	tests := []struct {
-		name string
-		req  *scheduling.InferenceRequest
-		want bool
-	}{
-		{"nil request", nil, false},
-		{"nil headers", &scheduling.InferenceRequest{}, false},
-		{"empty headers", &scheduling.InferenceRequest{Headers: map[string]string{}}, false},
-		{"unrelated header", &scheduling.InferenceRequest{Headers: map[string]string{"x-other": "v"}}, false},
-		{
-			"prefer=return=minimal (not if-available)",
-			&scheduling.InferenceRequest{Headers: map[string]string{routing.PreferHeader: "return=minimal"}},
-			false,
-		},
-		{
-			"prefer=if-available",
-			&scheduling.InferenceRequest{Headers: map[string]string{routing.PreferHeader: routing.PreferIfAvailable}},
-			true,
-		},
-		{
-			"prefer=If-Available (case insensitive)",
-			&scheduling.InferenceRequest{Headers: map[string]string{routing.PreferHeader: "If-Available"}},
-			true,
-		},
-		{
-			"prefer with multiple tokens including if-available",
-			&scheduling.InferenceRequest{Headers: map[string]string{routing.PreferHeader: "return=minimal, if-available"}},
-			true,
-		},
-		{
-			"prefer=if-available; param=v (parameter ignored)",
-			&scheduling.InferenceRequest{Headers: map[string]string{routing.PreferHeader: "if-available;param=v"}},
-			true,
-		},
-		{
-			"prefer=if-available with leading whitespace",
-			&scheduling.InferenceRequest{Headers: map[string]string{routing.PreferHeader: "  if-available  "}},
-			true,
-		},
-		{
-			"prefer with similar but distinct token",
-			&scheduling.InferenceRequest{Headers: map[string]string{routing.PreferHeader: "if-available-but-different"}},
-			false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, isConditionalDecode(tt.req))
-		})
-	}
-}
-
 // withConditionalDecodeHeader sets the Prefer: if-available header that triggers conditional-decode.
 func withConditionalDecodeHeader(req *scheduling.InferenceRequest) *scheduling.InferenceRequest {
 	if req.Headers == nil {
@@ -1488,89 +1434,4 @@ func TestHandler_Pick_ConditionalDecode_AbsentHeader(t *testing.T) {
 	}
 	got := h.Pick(ctx, nil, req, profiles, results)
 	assert.ElementsMatch(t, []string{defaultPrefillProfile}, profileNames(got))
-}
-
-// TestHasCachedPrefix covers the cache-availability helper used by ProcessResults.
-func TestHasCachedPrefix(t *testing.T) {
-	endpointWith := func(matched, total int) scheduling.Endpoint {
-		ep := makeEndpoint(k8stypes.NamespacedName{Namespace: "default", Name: "p"}, "10.0.0.1", testPodPort, nil)
-		ep.Put(attrprefix.PrefixCacheMatchInfoDataKey.String(),
-			attrprefix.NewPrefixCacheMatchInfo(matched, total, 1))
-		return ep
-	}
-
-	tests := []struct {
-		name string
-		ep   scheduling.Endpoint
-		want bool
-	}{
-		{"nil endpoint", nil, false},
-		{"endpoint without match info", makeEndpoint(k8stypes.NamespacedName{Namespace: "default", Name: "p"}, "10.0.0.1", testPodPort, nil), false},
-		{"zero match blocks", endpointWith(0, 4), false},
-		{"some match blocks", endpointWith(2, 4), true},
-		{"full match", endpointWith(4, 4), true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, hasCachedPrefix(tt.ep))
-		})
-	}
-}
-
-// TestHandler_ProcessResults_ConditionalDecode_CacheHit verifies that a request
-// flagged as conditional-decode is forwarded to the chosen decode pod when the
-// pod has a non-empty prefix-cache match.
-func TestHandler_ProcessResults_ConditionalDecode_CacheHit(t *testing.T) {
-	h := NewDisaggProfileHandler(defaultDecodeProfile, defaultPrefillProfile, "", nil, nil)
-
-	req := withConditionalDecodeHeader(completionsRequest(testLongPrompt))
-	results := map[string]*scheduling.ProfileRunResult{
-		defaultDecodeProfile: makeProfileRunResult("pod1"),
-	}
-	injectPrefixCache(results, 2, 8) // 2 cached blocks → cache available
-
-	res, err := h.ProcessResults(context.Background(), nil, req, results)
-	assert.NoError(t, err)
-	assert.NotNil(t, res)
-	assert.Equal(t, defaultDecodeProfile, res.PrimaryProfileName)
-	assert.Contains(t, res.ProfileResults, defaultDecodeProfile)
-}
-
-// TestHandler_ProcessResults_ConditionalDecode_CacheMiss verifies that a
-// conditional-decode request whose chosen decode pod has no cached prefix
-// surfaces a 412 PreconditionFailed error so the coordinator can restart
-// the pipeline.
-func TestHandler_ProcessResults_ConditionalDecode_CacheMiss(t *testing.T) {
-	h := NewDisaggProfileHandler(defaultDecodeProfile, defaultPrefillProfile, "", nil, nil)
-
-	req := withConditionalDecodeHeader(completionsRequest(testLongPrompt))
-	results := map[string]*scheduling.ProfileRunResult{
-		defaultDecodeProfile: makeProfileRunResult("pod1"),
-	}
-	// no injectPrefixCache — chosen pod has zero cached blocks.
-
-	res, err := h.ProcessResults(context.Background(), nil, req, results)
-	assert.Nil(t, res)
-	assert.Error(t, err)
-
-	e, ok := err.(errcommon.Error)
-	assert.True(t, ok, "expected typed errcommon.Error to surface 412")
-	assert.Equal(t, errcommon.PreconditionFailed, e.Code)
-}
-
-// TestHandler_ProcessResults_NotConditionalDecode_NoCacheRequired confirms that
-// non-conditional requests are not subjected to the cache check and proceed
-// normally even when no prefix-cache match info is present.
-func TestHandler_ProcessResults_NotConditionalDecode_NoCacheRequired(t *testing.T) {
-	h := NewDisaggProfileHandler(defaultDecodeProfile, defaultPrefillProfile, "", nil, nil)
-
-	req := completionsRequest(testLongPrompt)
-	req.Headers = map[string]string{}
-	results := map[string]*scheduling.ProfileRunResult{
-		defaultDecodeProfile: makeProfileRunResult("pod1"),
-	}
-
-	res, err := h.ProcessResults(context.Background(), nil, req, results)
-	assert.NoError(t, err)
-	assert.NotNil(t, res)
 }
