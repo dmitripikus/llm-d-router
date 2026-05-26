@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
@@ -456,16 +457,25 @@ func (r *GenerateRequest) String() string {
 	if r == nil {
 		return nilStr
 	}
-	mmItems := 0
-	mmModalities := 0
-	if r.Features != nil {
-		mmModalities = len(r.Features.MMHashes)
-		for _, hashes := range r.Features.MMHashes {
-			mmItems += len(hashes)
+	mmHashes := "{}"
+	if r.Features != nil && len(r.Features.MMHashes) > 0 {
+		keys := make([]string, 0, len(r.Features.MMHashes))
+		for k := range r.Features.MMHashes {
+			keys = append(keys, k)
 		}
+		sort.Strings(keys)
+		var sb strings.Builder
+		sb.WriteByte('{')
+		for i, k := range keys {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			fmt.Fprintf(&sb, "%s:%d", k, len(r.Features.MMHashes[k]))
+		}
+		sb.WriteByte('}')
+		mmHashes = sb.String()
 	}
-	return fmt.Sprintf("{TokenIDsCount: %d, MMModalities: %d, MMItems: %d}",
-		len(r.TokenIDs), mmModalities, mmItems)
+	return fmt.Sprintf("{TokenIDsCount: %d, MMHashes: %s}", len(r.TokenIDs), mmHashes)
 }
 
 func (r *GenerateRequest) UnmarshalJSON(data []byte) error {
