@@ -11,6 +11,10 @@ This directory contains parser plugins used to parse and understand the payloads
 *   **`passthrough-parser`**: A model-agnostic parser that supports any request format by passing the request body through without interpretation.
     *   **Drawback**: EPP cannot parse the payload, so payload-related scheduling scorers (e.g., `prefix-cache-scorer`) are not supported.
 
+### Choosing between `openai-parser` and `vllmhttp-parser`
+
+`vllmhttp-parser` is a superset of `openai-parser`: it embeds an `openai-parser` instance and delegates every path it does not handle natively (currently anything other than `/inference/v1/generate`) to it. Choose `openai-parser` when the route only serves OpenAI-compatible traffic; choose `vllmhttp-parser` when the same route must additionally accept `/inference/v1/generate`. The two are not configured side-by-side on the same route — the `requestHandler.parser` slot is single-valued, and `vllmhttp-parser` already covers both surfaces.
+
 ## Configuration
 
 Parsers are configured via the `parser` section in the `EndpointPickerConfig` YAML file. You must first instantiate the parser plugin in the `plugins` section, and then reference its name in the `parser` section. 
