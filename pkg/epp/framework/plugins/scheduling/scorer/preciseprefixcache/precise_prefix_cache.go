@@ -820,9 +820,6 @@ func (s *Scorer) getScores(ctx context.Context, request *scheduling.InferenceReq
 
 		scores, err := s.kvCacheIndexer.ScoreTokens(ctx, tokens, request.TargetModel, nil, extraFeatures)
 		if err != nil {
-			if errors.Is(err, kvcache.ErrInternalTokenizationDisabled) {
-				return map[string]float64{}, 0, nil
-			}
 			return nil, 0, fmt.Errorf("failed to get endpoint scores for tokens: %w", err)
 		}
 		// floor(tokens/blockSize) — trailing partial block is dropped.
