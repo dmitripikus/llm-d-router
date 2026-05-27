@@ -173,7 +173,7 @@ func TestOpenAIParser_ParseRequest(t *testing.T) {
 				"tokens": map[string]any{
 					"token_ids": []any{1, 2, 3},
 					"features": map[string]any{
-						"mm_hashes":        map[string]any{"image": []any{"abc"}},
+						"mm_hashes":       map[string]any{"image": []any{"abc"}},
 						"mm_placeholders": map[string]any{"image": []any{map[string]any{"offset": 1, "length": 3}}},
 					},
 				},
