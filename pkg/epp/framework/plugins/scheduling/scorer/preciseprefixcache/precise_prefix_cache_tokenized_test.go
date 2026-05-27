@@ -18,6 +18,7 @@ package preciseprefixcache
 
 import (
 	"context"
+	"hash/fnv"
 	"testing"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
@@ -376,4 +377,68 @@ func TestScorer_ComputeBlockKeys_GenerateFallback(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestScorer_ComputeBlockKeys_GenerateMMHashesAffectKeys exercises the
+// regression case where Generate.Features.MMHashes is silently dropped while
+// extraFeatures is still emitted as a non-nil slice. The mock derives block
+// keys deterministically from the per-block MMHashes, so two requests sharing
+// TokenIDs but differing in MMHashes must produce different block keys; an
+// empty/identical extraFeatures payload would collapse them.
+func TestScorer_ComputeBlockKeys_GenerateMMHashesAffectKeys(t *testing.T) {
+	tokenIDs := []uint32{10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160}
+
+	keysFromHash := func(hash string) []kvblock.BlockHash {
+		ctx := utils.NewTestContext(t)
+		var captured []*kvblock.BlockExtraFeatures
+
+		scorer := &Scorer{
+			typedName:       plugin.TypedName{Type: PrecisePrefixCachePluginType, Name: "test"},
+			blockSizeTokens: 16,
+			kvCacheIndexer: &mockKVCacheIndexer{
+				computeBlockKeysFromTokensFn: func(_ context.Context, tokens []uint32, _ string, extra []*kvblock.BlockExtraFeatures) ([]kvblock.BlockHash, error) {
+					captured = extra
+					keys := make([]kvblock.BlockHash, len(tokens)/16)
+					for i := range keys {
+						h := fnv.New64a()
+						_, _ = h.Write([]byte{byte(tokens[i*16])})
+						if i < len(extra) && extra[i] != nil {
+							for _, mm := range extra[i].MMHashes {
+								_, _ = h.Write([]byte(mm.Hash))
+							}
+						}
+						keys[i] = kvblock.BlockHash(h.Sum64())
+					}
+					return keys, nil
+				},
+			},
+		}
+
+		request := &scheduling.InferenceRequest{
+			RequestID:   "test-mm-hash-affects-keys",
+			TargetModel: "test-model",
+			Body: &fwkrh.InferenceRequestBody{
+				Generate: &fwkrh.GenerateRequest{
+					TokenIDs: tokenIDs,
+					Features: &tokenization.MultiModalFeatures{
+						MMHashes: map[string][]string{"image": {hash}},
+						MMPlaceholders: map[string][]kvblock.PlaceholderRange{
+							"image": {{Offset: 2, Length: 4}},
+						},
+					},
+				},
+			},
+		}
+
+		keys, err := scorer.computeBlockKeys(ctx, request)
+		require.NoError(t, err)
+		require.NotEmpty(t, captured, "extraFeatures must reach the indexer when Features are present")
+		return keys
+	}
+
+	keysA := keysFromHash("abc123hash")
+	keysB := keysFromHash("xyz789hash")
+
+	require.Equal(t, len(keysA), len(keysB), "key counts should match for identical TokenIDs")
+	assert.NotEqual(t, keysA, keysB, "different MMHashes must produce different block keys")
 }
