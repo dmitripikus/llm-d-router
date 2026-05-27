@@ -219,7 +219,6 @@ func (p *Plugin) tokenize(ctx context.Context, request *scheduling.InferenceRequ
 		traceLogger.Info("Calling RenderChat for chat completions", "messageCount", len(request.Body.ChatCompletions.Messages))
 		tokenIDs, mmFeatures, err = p.tokenizer.RenderChat(ctx, renderReq)
 	case request.Body.Generate != nil:
-		// Generate requests carry pre-tokenized input — use token IDs directly, no tokenizer call needed.
 		traceLogger.Info("Using pre-tokenized token IDs from generate request", "tokenCount", len(request.Body.Generate.TokenIDs))
 		return &fwkrh.TokenizedPrompt{
 			TokenIDs:           request.Body.Generate.TokenIDs,
