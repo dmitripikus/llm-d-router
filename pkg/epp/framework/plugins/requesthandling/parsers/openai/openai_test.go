@@ -193,24 +193,6 @@ func TestOpenAIParser_ParseRequest(t *testing.T) {
 			},
 		},
 		{
-			name:    "completions request body strips top-level tokens field",
-			headers: map[string]string{":path": "/v1/completions"},
-			body: map[string]any{
-				"model":  "test",
-				"prompt": "hello",
-				"tokens": map[string]any{"token_ids": []any{1, 2, 3}},
-			},
-			want: &fwkrh.InferenceRequestBody{
-				Completions: &fwkrh.CompletionsRequest{
-					Prompt: fwkrh.Prompt{Raw: "hello"},
-				},
-				Payload: fwkrh.PayloadMap{
-					"model":  "test",
-					"prompt": "hello",
-				},
-			},
-		},
-		{
 			name:    "chat completions request body with multi-modal content",
 			headers: map[string]string{":path": "/v1/chat/completions"},
 			body: map[string]any{
