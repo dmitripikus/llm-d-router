@@ -1374,14 +1374,14 @@ func TestHandler_Pick_ConditionalDecode_PD(t *testing.T) {
 	req := withConditionalDecodeHeader(completionsRequest(testLongPrompt))
 
 	// Stage 1: decode not run → run decode (header doesn't change Stage 1).
-	got := h.Pick(ctx, nil, req, profiles, map[string]*scheduling.ProfileRunResult{})
+	got := h.Pick(ctx, req, profiles, map[string]*scheduling.ProfileRunResult{})
 	assert.ElementsMatch(t, []string{defaultDecodeProfile}, profileNames(got))
 
 	// Stage 2: decode succeeded → conditional-decode short-circuits prefill.
 	results := map[string]*scheduling.ProfileRunResult{
 		defaultDecodeProfile: makeProfileRunResult("pod1"),
 	}
-	got = h.Pick(ctx, nil, req, profiles, results)
+	got = h.Pick(ctx, req, profiles, results)
 	assert.Empty(t, profileNames(got), "conditional-decode must skip prefill")
 }
 
@@ -1407,7 +1407,7 @@ func TestHandler_Pick_ConditionalDecode_EPD(t *testing.T) {
 	results := map[string]*scheduling.ProfileRunResult{
 		defaultDecodeProfile: makeProfileRunResult("pod1"),
 	}
-	got := h.Pick(ctx, nil, req, profiles, results)
+	got := h.Pick(ctx, req, profiles, results)
 	assert.Empty(t, profileNames(got), "conditional-decode must skip encode and prefill")
 }
 
@@ -1432,6 +1432,6 @@ func TestHandler_Pick_ConditionalDecode_AbsentHeader(t *testing.T) {
 	results := map[string]*scheduling.ProfileRunResult{
 		defaultDecodeProfile: makeProfileRunResult("pod1"),
 	}
-	got := h.Pick(ctx, nil, req, profiles, results)
+	got := h.Pick(ctx, req, profiles, results)
 	assert.ElementsMatch(t, []string{defaultPrefillProfile}, profileNames(got))
 }
