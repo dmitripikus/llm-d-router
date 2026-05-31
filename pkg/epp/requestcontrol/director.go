@@ -29,6 +29,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-logr/logr"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -65,28 +66,44 @@ const (
 // by a precise/approximate-prefix scorer during the decode profile run. It
 // returns false when the result is missing, the primary profile produced no
 // endpoint, the endpoint carries no PrefixCacheMatchInfo attribute, or the
-// recorded match has zero blocks.
-func primaryEndpointHasCachedPrefix(result *fwksched.SchedulingResult) bool {
+// recorded match has zero blocks. False-return reasons are logged at
+// V(logutil.DEBUG) to disambiguate misconfiguration (no scorer attached) from
+// a real cache miss.
+func primaryEndpointHasCachedPrefix(logger logr.Logger, result *fwksched.SchedulingResult) bool {
+	debug := logger.V(logutil.DEBUG)
 	if result == nil {
+		debug.Info("conditional-decode: scheduling result is nil")
 		return false
 	}
 	primary, ok := result.ProfileResults[result.PrimaryProfileName]
-	if !ok || primary == nil || len(primary.TargetEndpoints) == 0 {
+	if !ok || primary == nil {
+		debug.Info("conditional-decode: primary profile result missing", "primary", result.PrimaryProfileName)
+		return false
+	}
+	if len(primary.TargetEndpoints) == 0 {
+		debug.Info("conditional-decode: primary profile produced no endpoints", "primary", result.PrimaryProfileName)
 		return false
 	}
 	endpoint := primary.TargetEndpoints[0]
 	if endpoint == nil {
+		debug.Info("conditional-decode: primary endpoint is nil")
 		return false
 	}
 	raw, ok := endpoint.Get(attrprefix.PrefixCacheMatchInfoDataKey.String())
 	if !ok || raw == nil {
+		debug.Info("conditional-decode: endpoint has no prefix-cache match attribute (no scorer attached?)")
 		return false
 	}
 	info, ok := raw.(*attrprefix.PrefixCacheMatchInfo)
 	if !ok {
+		debug.Info("conditional-decode: prefix-cache attribute has unexpected type", "type", fmt.Sprintf("%T", raw))
 		return false
 	}
-	return info.MatchBlocks() > 0
+	if info.MatchBlocks() == 0 {
+		debug.Info("conditional-decode: prefix-cache match has zero blocks")
+		return false
+	}
+	return true
 }
 
 // Datastore defines the interface required by the Director.
@@ -305,7 +322,7 @@ func (d *Director) HandleRequest(ctx context.Context, reqCtx *handlers.RequestCo
 	// at encode/prefill/decode. Lives in the director (not in a profile handler)
 	// so it fires regardless of which profile handler is configured.
 	if routing.IsConditionalDecode(reqCtx.Request.Headers) {
-		if !primaryEndpointHasCachedPrefix(result) {
+		if !primaryEndpointHasCachedPrefix(logger, result) {
 			logger.V(logutil.DEBUG).Info("conditional-decode: chosen decode worker has no cached prefix, returning 412")
 			return reqCtx, errcommon.Error{
 				Code: errcommon.PreconditionFailed,

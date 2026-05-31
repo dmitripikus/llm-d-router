@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
@@ -1644,7 +1645,7 @@ func TestPrimaryEndpointHasCachedPrefix(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, primaryEndpointHasCachedPrefix(tt.in))
+			assert.Equal(t, tt.want, primaryEndpointHasCachedPrefix(logr.Discard(), tt.in))
 		})
 	}
 }
