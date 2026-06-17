@@ -105,6 +105,27 @@ func primaryEndpointHasCachedPrefix(logger logr.Logger, result *fwksched.Schedul
 	return true
 }
 
+// conditionalDecodeMissHeaders returns the response headers attached to a 412
+// conditional-decode rejection. It mirrors the success path by stamping the
+// rejected decode worker's endpoint into x-gateway-destination-endpoint so the
+// coordinator can correlate the miss with the worker the EPP picked.
+func conditionalDecodeMissHeaders(result *fwksched.SchedulingResult) map[string]string {
+	if result == nil {
+		return nil
+	}
+	primary, ok := result.ProfileResults[result.PrimaryProfileName]
+	if !ok || primary == nil || len(primary.TargetEndpoints) == 0 || primary.TargetEndpoints[0] == nil {
+		return nil
+	}
+	meta := primary.TargetEndpoints[0].GetMetadata()
+	if meta == nil {
+		return nil
+	}
+	return map[string]string{
+		metadata.DestinationEndpointKey: net.JoinHostPort(meta.GetIPAddress(), meta.GetPort()),
+	}
+}
+
 // Datastore defines the interface required by the Director.
 type Datastore interface {
 	PoolGet() (*datalayer.EndpointPool, error)
@@ -326,8 +347,9 @@ func (d *Director) HandleRequest(ctx context.Context, reqCtx *handlers.RequestCo
 		if !primaryEndpointHasCachedPrefix(logger, result) {
 			logger.V(logutil.DEBUG).Info("conditional-decode: chosen decode worker has no cached prefix, returning 412")
 			return reqCtx, errcommon.Error{
-				Code: errcommon.PreconditionFailed,
-				Msg:  "no decode worker has the requested KV cache",
+				Code:    errcommon.PreconditionFailed,
+				Msg:     "no decode worker has the requested KV cache",
+				Headers: conditionalDecodeMissHeaders(result),
 			}
 		}
 		logger.V(logutil.DEBUG).Info("conditional-decode: chosen decode worker has cached prefix, forwarding")
