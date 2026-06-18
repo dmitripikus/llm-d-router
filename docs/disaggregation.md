@@ -415,7 +415,10 @@ The `prefix-based-pd-decider` plugin makes the disaggregation decision according
 
 **Conditional-decode 412 gate**
 
-When this plugin is configured, it also drives the EPP's RFC 7240 `Prefer: if-available` (conditional-decode) gate. The coordinator uses that header to mark a speculative early-decode attempt: forward to a decode worker only if its KV cache already covers the prompt, otherwise return HTTP 412 Precondition Failed so the coordinator restarts the pipeline at encode/prefill/decode.
+When this plugin is configured, it also gates requests carrying the RFC 7240 `Prefer: if-available` header: a request is forwarded to the chosen decode worker only when the worker's KV cache already covers the prompt; otherwise the EPP returns HTTP 412 Precondition Failed.
+
+> **Note**
+> The llm-d coordinator uses this header to mark speculative early-decode attempts. A 412 response signals that the local cache was insufficient, prompting the coordinator to restart the pipeline at encode/prefill/decode.
 
 The gate uses the same `nonCachedTokens` threshold as the disaggregation decision:
 

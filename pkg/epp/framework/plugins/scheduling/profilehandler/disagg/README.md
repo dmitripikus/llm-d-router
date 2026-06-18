@@ -200,7 +200,7 @@ Setting `nonCachedTokens: 0` disables both decisions entirely (disaggregation ne
 | Decision | Behavior on unreadable prefix info | Rationale |
 |---|---|---|
 | Disaggregation | fail open — return false (no disaggregation) | A misconfigured prefix-cache producer should not silently route every request to remote prefill. |
-| Conditional-decode 412 gate | fail closed — return true (reject with 412) | The header is a "fast-fail" hint from the coordinator: if the EPP cannot prove the cache covers the prompt, the safe answer is to bounce so the coordinator falls back to the full pipeline. |
+| Conditional-decode 412 gate | fail closed — return true (reject with 412) | The `Prefer: if-available` header is a fast-fail hint: if the EPP cannot prove the cache covers the prompt, the safe answer is to reject with 412 so the caller can fall back. |
 
 #### Inputs consumed
 
