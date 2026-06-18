@@ -99,10 +99,9 @@ type PreAdmitter interface {
 	PreAdmit(ctx context.Context, request *fwksched.InferenceRequest) error
 }
 
-// ConditionalDecodeDecider answers the RFC 7240 "Prefer: if-available" gate:
-// given the chosen decode endpoint, should the request be rejected with HTTP
-// 412 (because the local KV cache does not cover enough of the prompt) or
-// forwarded? At most one such plugin is consulted per director.
+// ConditionalDecodeDecider decides whether a request carrying the
+// RFC 7240 "Prefer: if-available" header should be rejected with HTTP 412
+// Precondition Failed or forwarded to the chosen decode endpoint.
 type ConditionalDecodeDecider interface {
 	plugin.Plugin
 	ShouldRejectConditionalDecode(ctx context.Context, request *fwksched.InferenceRequest, endpoint fwksched.Endpoint) bool
