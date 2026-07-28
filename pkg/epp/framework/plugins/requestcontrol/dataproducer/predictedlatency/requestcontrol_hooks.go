@@ -39,21 +39,21 @@ var _ requestcontrol.ResponseBodyProcessor = &PredictedLatency{}
 
 // --- RequestControl Hooks ---
 
-func (pl *PredictedLatency) PreRequest(ctx context.Context, request *fwksched.InferenceRequest, schedulingResult *fwksched.SchedulingResult) {
+func (pl *PredictedLatency) PreRequest(ctx context.Context, request *fwksched.InferenceRequest, schedulingResult *fwksched.SchedulingResult) error {
 	logger := log.FromContext(ctx)
 	if request == nil {
 		logger.V(logutil.DEBUG).Info("PredictedLatency.PreRequest: request is nil, skipping")
-		return
+		return nil
 	}
 
 	if schedulingResult == nil || len(schedulingResult.ProfileResults) == 0 {
 		logger.V(logutil.TRACE).Info("PredictedLatency: Skipping PreRequest because no scheduling result was provided.")
-		return
+		return nil
 	}
 
 	targetMetadata := schedulingResult.ProfileResults[schedulingResult.PrimaryProfileName].TargetEndpoints[0].GetMetadata()
 	if !pl.checkPredictor(logger, targetMetadata) {
-		return
+		return nil
 	}
 
 	endpointName := types.NamespacedName{
@@ -64,7 +64,7 @@ func (pl *PredictedLatency) PreRequest(ctx context.Context, request *fwksched.In
 	logger.V(logutil.TRACE).Info("request ID for SLO tracking", "requestID", request.Headers[reqcommon.RequestIDHeaderKey], "endpointName", endpointName)
 	if request.Headers[reqcommon.RequestIDHeaderKey] == "" {
 		logger.V(logutil.DEBUG).Error(errors.New("missing request ID"), "PredictedLatency.PreRequest: Request is missing request ID header")
-		return
+		return nil
 	}
 
 	id := request.Headers[reqcommon.RequestIDHeaderKey]
@@ -76,7 +76,7 @@ func (pl *PredictedLatency) PreRequest(ctx context.Context, request *fwksched.In
 	if err != nil {
 		id := request.Headers[reqcommon.RequestIDHeaderKey]
 		logger.V(logutil.DEBUG).Info("PredictedLatency.PreRequest: Failed to get SLO context for request", "error", err, "requestID", id)
-		return
+		return nil
 	}
 
 	added := endpointRequestList.Add(id, predictedLatencyCtx.avgTPOTSLO)
@@ -118,6 +118,7 @@ func (pl *PredictedLatency) PreRequest(ctx context.Context, request *fwksched.In
 	predictedLatencyCtx.decodeTokensAtDispatch = 0
 
 	processPreRequestForLatencyPrediction(ctx, predictedLatencyCtx)
+	return nil
 }
 
 func (pl *PredictedLatency) ResponseHeader(ctx context.Context, request *fwksched.InferenceRequest, response *requestcontrol.Response, targetMetadata *fwkdl.EndpointMetadata) {

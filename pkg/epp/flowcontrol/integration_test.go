@@ -90,7 +90,7 @@ func TestConcurrentSaturationReads(t *testing.T) {
 					"decode": {TargetEndpoints: []fwksched.Endpoint{schedEp}},
 				},
 			}
-			pd.producer.PreRequest(ctx, req, result)
+			_ = pd.producer.PreRequest(ctx, req, result)
 			req.SchedulingResult = result
 			pd.producer.ResponseBody(ctx, req,
 				&requestcontrol.Response{EndOfStream: true}, pd.epMeta)
@@ -163,7 +163,7 @@ func TestSaturationFullLoop(t *testing.T) {
 				"decode": {TargetEndpoints: []fwksched.Endpoint{schedEp}},
 			},
 		}
-		pd.producer.PreRequest(h.ctx, req, result)
+		_ = pd.producer.PreRequest(h.ctx, req, result)
 	}
 
 	// Verify the detector sees saturation via the real Locate->Saturation path.
@@ -452,7 +452,7 @@ func TestUsageLimitThresholdGatesDispatch(t *testing.T) {
 				"decode": {TargetEndpoints: []fwksched.Endpoint{schedEp}},
 			},
 		}
-		pd.producer.PreRequest(h.ctx, req, result)
+		_ = pd.producer.PreRequest(h.ctx, req, result)
 	}
 
 	// saturation=0.5, threshold=0.5: 0.5 >= 0.5 -> HoL blocking should trigger.
@@ -656,8 +656,8 @@ func TestEvictionPipeline(t *testing.T) {
 	reqCtx, reqCancel := context.WithCancel(ctx)
 	defer reqCancel()
 
-	requestEvictor.PreRequest(reqCtx, sheddableReq, makeResult())
-	requestEvictor.PreRequest(reqCtx, protectedReq, makeResult())
+	_ = requestEvictor.PreRequest(reqCtx, sheddableReq, makeResult())
+	_ = requestEvictor.PreRequest(reqCtx, protectedReq, makeResult())
 
 	inFlight, evictable := requestEvictor.Stats()
 	require.Equal(t, 2, inFlight, "both requests should be tracked in-flight")
@@ -993,7 +993,7 @@ func TestEndpointReregistrationSaturationAccuracy(t *testing.T) {
 			"decode": {TargetEndpoints: []fwksched.Endpoint{schedEp}},
 		},
 	}
-	producer.PreRequest(ctx, oldReq, oldResult)
+	_ = producer.PreRequest(ctx, oldReq, oldResult)
 
 	sat := detector.Saturation(ctx, []datalayer.Endpoint{ep})
 	require.Greater(t, sat, 0.0, "saturation should be nonzero with in-flight request")
@@ -1049,7 +1049,7 @@ func TestEndpointReregistrationSaturationAccuracy(t *testing.T) {
 			"decode": {TargetEndpoints: []fwksched.Endpoint{newSchedEp}},
 		},
 	}
-	producer.PreRequest(ctx, newReq, newResult)
+	_ = producer.PreRequest(ctx, newReq, newResult)
 	require.Equal(t, int64(1), producer.GetRequests(eid),
 		"new request on re-registered endpoint should be tracked")
 
@@ -1110,7 +1110,7 @@ func TestEndpointIdentityCollisionDuringPodReplacement(t *testing.T) {
 			"decode": {TargetEndpoints: []fwksched.Endpoint{schedEp}},
 		},
 	}
-	producer.PreRequest(ctx, req, result)
+	_ = producer.PreRequest(ctx, req, result)
 
 	require.Greater(t, detector.Saturation(ctx, []datalayer.Endpoint{newEp}), 0.0,
 		"new endpoint should show in-flight load before stale delete")

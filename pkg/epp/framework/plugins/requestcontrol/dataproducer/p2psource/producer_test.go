@@ -168,7 +168,7 @@ func TestPreRequest_SetsKVCacheSourceHeader(t *testing.T) {
 	req := &scheduling.InferenceRequest{RequestID: "req-hdr", Headers: map[string]string{}}
 	req.PutAttribute(p.attrKey(), &bestMatchPeer{hostPort: "10.0.0.2:8080", cachedTokens: 48})
 
-	p.PreRequest(ctx, req, decodeOnly(endpoint(p, "pod-a", "10.0.0.1", 1)))
+	_ = p.PreRequest(ctx, req, decodeOnly(endpoint(p, "pod-a", "10.0.0.1", 1)))
 
 	assert.Equal(t, "10.0.0.2:8080", req.Headers[routing.KVCacheSourceHeader])
 }
@@ -181,7 +181,7 @@ func TestPreRequest_DeltaBelowThreshold_NoHeader(t *testing.T) {
 	req := &scheduling.InferenceRequest{RequestID: "req-low", Headers: map[string]string{}}
 	req.PutAttribute(p.attrKey(), &bestMatchPeer{hostPort: "10.0.0.2:8080", cachedTokens: 32})
 
-	p.PreRequest(ctx, req, decodeOnly(endpoint(p, "pod-a", "10.0.0.1", 1)))
+	_ = p.PreRequest(ctx, req, decodeOnly(endpoint(p, "pod-a", "10.0.0.1", 1)))
 
 	assert.NotContains(t, req.Headers, routing.KVCacheSourceHeader)
 }
@@ -194,7 +194,7 @@ func TestPreRequest_BestIsChosen_NoHeader(t *testing.T) {
 	req := &scheduling.InferenceRequest{RequestID: "req-self", Headers: map[string]string{}}
 	req.PutAttribute(p.attrKey(), &bestMatchPeer{hostPort: "10.0.0.1:8080", cachedTokens: 32})
 
-	p.PreRequest(ctx, req, decodeOnly(endpoint(p, "pod-a", "10.0.0.1", 2)))
+	_ = p.PreRequest(ctx, req, decodeOnly(endpoint(p, "pod-a", "10.0.0.1", 2)))
 
 	assert.NotContains(t, req.Headers, routing.KVCacheSourceHeader)
 }
@@ -215,7 +215,7 @@ func TestPreRequest_PrefillProfile_BestIsPrefill_NoHeader(t *testing.T) {
 			"prefill": {TargetEndpoints: []scheduling.Endpoint{endpoint(p, "pod-b", "10.0.0.2", 3)}},
 		},
 	}
-	p.PreRequest(ctx, req, result)
+	_ = p.PreRequest(ctx, req, result)
 
 	assert.NotContains(t, req.Headers, routing.KVCacheSourceHeader)
 }
@@ -235,7 +235,7 @@ func TestPreRequest_PrefillProfile_HeaderFromThirdPod(t *testing.T) {
 			"prefill": {TargetEndpoints: []scheduling.Endpoint{endpoint(p, "pod-b", "10.0.0.2", 1)}},
 		},
 	}
-	p.PreRequest(ctx, req, result)
+	_ = p.PreRequest(ctx, req, result)
 
 	assert.Equal(t, "10.0.0.3:8080", req.Headers[routing.KVCacheSourceHeader])
 }
@@ -251,7 +251,7 @@ func TestPreRequest_DeletesInboundHeader(t *testing.T) {
 		Headers:   map[string]string{routing.KVCacheSourceHeader: "evil:1234"},
 	}
 
-	p.PreRequest(ctx, req, decodeOnly(endpoint(p, "pod-a", "10.0.0.1", 0)))
+	_ = p.PreRequest(ctx, req, decodeOnly(endpoint(p, "pod-a", "10.0.0.1", 0)))
 
 	assert.NotContains(t, req.Headers, routing.KVCacheSourceHeader)
 }
@@ -276,7 +276,7 @@ func TestPreRequest_IPv6HeaderBracketed(t *testing.T) {
 	req := &scheduling.InferenceRequest{RequestID: "req-ipv6", Headers: map[string]string{}}
 	req.PutAttribute(p.attrKey(), &bestMatchPeer{hostPort: best, cachedTokens: 48})
 
-	p.PreRequest(ctx, req, decodeOnly(endpoint(p, "pod-a", "fd00::1", 1)))
+	_ = p.PreRequest(ctx, req, decodeOnly(endpoint(p, "pod-a", "fd00::1", 1)))
 
 	assert.Equal(t, best, req.Headers[routing.KVCacheSourceHeader])
 	// Round-trips through the same validation the sidecar applies.
@@ -314,7 +314,7 @@ func TestPreRequest_ConfiguredPrefillProfileName(t *testing.T) {
 			"P":      {TargetEndpoints: []scheduling.Endpoint{endpoint(p, "pod-b", "10.0.0.2", 3)}},
 		},
 	}
-	p.PreRequest(ctx, req, result)
+	_ = p.PreRequest(ctx, req, result)
 	assert.NotContains(t, req.Headers, routing.KVCacheSourceHeader)
 }
 

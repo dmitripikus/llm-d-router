@@ -185,16 +185,18 @@ func (m *mockRequestHeaderPlugin) RequestHeader(_ context.Context, request *fwks
 type mockPreRequestPlugin struct {
 	name     string
 	modifyFn func(request *fwksched.InferenceRequest)
+	err      error
 }
 
 func (m *mockPreRequestPlugin) TypedName() fwkplugin.TypedName {
 	return fwkplugin.TypedName{Name: m.name, Type: "mock"}
 }
 
-func (m *mockPreRequestPlugin) PreRequest(ctx context.Context, request *fwksched.InferenceRequest, schedulingResult *fwksched.SchedulingResult) {
+func (m *mockPreRequestPlugin) PreRequest(ctx context.Context, request *fwksched.InferenceRequest, schedulingResult *fwksched.SchedulingResult) error {
 	if m.modifyFn != nil {
 		m.modifyFn(request)
 	}
+	return m.err
 }
 
 type mockProducedDataType struct {
@@ -2059,4 +2061,37 @@ func TestDirector_HandleRequest_ConditionalDecode(t *testing.T) {
 			assert.Equal(t, tt.wantErrCode, e.Code)
 		})
 	}
+}
+
+// TestRunPreRequestPlugins_AggregatesErrors verifies that runPreRequestPlugins
+// invokes every registered PreRequest plugin regardless of individual failures
+// and returns the joined error covering all failed plugins.
+func TestRunPreRequestPlugins_AggregatesErrors(t *testing.T) {
+	ctx := logutil.NewTestLoggerIntoContext(context.Background())
+
+	firstErr := errors.New("first plugin boom")
+	thirdErr := errors.New("third plugin boom")
+
+	var invoked []string
+	record := func(name string) func(*fwksched.InferenceRequest) {
+		return func(*fwksched.InferenceRequest) { invoked = append(invoked, name) }
+	}
+	plugins := []fwkrc.PreRequest{
+		&mockPreRequestPlugin{name: "first", modifyFn: record("first"), err: firstErr},
+		&mockPreRequestPlugin{name: "second", modifyFn: record("second")},
+		&mockPreRequestPlugin{name: "third", modifyFn: record("third"), err: thirdErr},
+	}
+
+	dir := &Director{requestControlPlugins: *NewConfig().WithPreRequestPlugins(plugins...)}
+
+	request := &fwksched.InferenceRequest{RequestID: "req-multi-err"}
+	err := dir.runPreRequestPlugins(ctx, request, &fwksched.SchedulingResult{})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, firstErr, "aggregated error must wrap the first plugin's error")
+	assert.ErrorIs(t, err, thirdErr, "aggregated error must wrap the third plugin's error")
+	assert.Contains(t, err.Error(), `PreRequest "first/mock" failed`)
+	assert.Contains(t, err.Error(), `PreRequest "third/mock" failed`)
+	assert.Equal(t, []string{"first", "second", "third"}, invoked,
+		"every plugin must run; a failure in one must not short-circuit the rest")
 }

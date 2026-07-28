@@ -1366,8 +1366,8 @@ func TestBothProfileAndHeadersHandlerPreRequest(t *testing.T) {
 		},
 	}
 
-	profileHandler.PreRequest(ctx, request, result)
-	headersHandler.PreRequest(ctx, request, result)
+	_ = profileHandler.PreRequest(ctx, request, result)
+	_ = headersHandler.PreRequest(ctx, request, result)
 
 	expected := net.JoinHostPort(podAddr, podPort)
 	assert.Equal(t, expected, request.Headers[routing.PrefillEndpointHeader],
@@ -1390,7 +1390,7 @@ func TestHandler_PreRequest_EncodeMultipleEndpoints(t *testing.T) {
 		},
 	}
 
-	h.PreRequest(ctx, request, result)
+	_ = h.PreRequest(ctx, request, result)
 
 	want := net.JoinHostPort("10.0.0.1", "8000") + "," + net.JoinHostPort("10.0.0.2", "8000")
 	assert.Equal(t, want, request.Headers[routing.EncoderEndpointsHeader])

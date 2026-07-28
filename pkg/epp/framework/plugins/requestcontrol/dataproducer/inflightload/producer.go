@@ -373,24 +373,24 @@ func (p *InFlightLoadProducer) Produce(_ context.Context, request *fwksched.Infe
 	return nil
 }
 
-func (p *InFlightLoadProducer) PreRequest(ctx context.Context, request *fwksched.InferenceRequest, result *fwksched.SchedulingResult) {
+func (p *InFlightLoadProducer) PreRequest(ctx context.Context, request *fwksched.InferenceRequest, result *fwksched.SchedulingResult) error {
 	if result == nil || len(result.ProfileResults) == 0 {
-		return
+		return nil
 	}
 
 	if request == nil {
 		log.FromContext(ctx).V(logutil.VERBOSE).Info("Skipping in-flight load tracking: request is nil")
-		return
+		return nil
 	}
 
 	if request.RequestID == "" {
 		log.FromContext(ctx).V(logutil.VERBOSE).Info("Skipping in-flight load tracking: missing RequestID")
-		return
+		return nil
 	}
 
 	if p.PluginState == nil {
 		log.FromContext(ctx).V(logutil.VERBOSE).Info("Skipping in-flight load tracking: PluginState is nil", "requestID", request.RequestID)
-		return
+		return nil
 	}
 
 	inputTokens := p.tokenEstimator.EstimateInput(request)
@@ -427,6 +427,7 @@ func (p *InFlightLoadProducer) PreRequest(ctx context.Context, request *fwksched
 			entry,
 		)
 	}
+	return nil
 }
 
 func (p *InFlightLoadProducer) estimateRequestTokens(endpoint fwksched.Endpoint, request *fwksched.InferenceRequest, inputTokens int64) int64 {

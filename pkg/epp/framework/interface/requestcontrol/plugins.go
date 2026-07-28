@@ -46,9 +46,11 @@ type Screener interface {
 
 // PreRequest is called by the director after a getting result from scheduling layer and
 // before a request is sent to the selected model server.
+// A non-nil error indicates the plugin could not complete its work; the director runs
+// every registered PreRequest plugin and aggregates their errors before failing the request.
 type PreRequest interface {
 	plugin.Plugin
-	PreRequest(ctx context.Context, request *fwksched.InferenceRequest, schedulingResult *fwksched.SchedulingResult)
+	PreRequest(ctx context.Context, request *fwksched.InferenceRequest, schedulingResult *fwksched.SchedulingResult) error
 }
 
 // ResponseHeaderProcessor is called by the director after the response headers are successfully received
