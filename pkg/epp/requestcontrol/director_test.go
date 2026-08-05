@@ -2100,6 +2100,39 @@ func TestDirector_HandleRequest_ConditionalDecode(t *testing.T) {
 	}
 }
 
+// TestRunPreRequestPlugins_NoPlugins verifies that runPreRequestPlugins returns
+// nil when no PreRequest plugins are registered.
+func TestRunPreRequestPlugins_NoPlugins(t *testing.T) {
+	ctx := logutil.NewTestLoggerIntoContext(context.Background())
+
+	dir := &Director{requestControlPlugins: *NewConfig()}
+
+	err := dir.runPreRequestPlugins(ctx, &fwksched.InferenceRequest{RequestID: "req-none"}, &fwksched.SchedulingResult{})
+	assert.NoError(t, err)
+}
+
+// TestRunPreRequestPlugins_AllSucceed verifies that runPreRequestPlugins invokes
+// every registered PreRequest plugin and returns nil when none fail.
+func TestRunPreRequestPlugins_AllSucceed(t *testing.T) {
+	ctx := logutil.NewTestLoggerIntoContext(context.Background())
+
+	var invoked []string
+	record := func(name string) func(*fwksched.InferenceRequest) {
+		return func(*fwksched.InferenceRequest) { invoked = append(invoked, name) }
+	}
+	plugins := []fwkrc.PreRequest{
+		&mockPreRequestPlugin{name: "first", modifyFn: record("first")},
+		&mockPreRequestPlugin{name: "second", modifyFn: record("second")},
+		&mockPreRequestPlugin{name: "third", modifyFn: record("third")},
+	}
+
+	dir := &Director{requestControlPlugins: *NewConfig().WithPreRequestPlugins(plugins...)}
+
+	err := dir.runPreRequestPlugins(ctx, &fwksched.InferenceRequest{RequestID: "req-ok"}, &fwksched.SchedulingResult{})
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"first", "second", "third"}, invoked, "every plugin must run")
+}
+
 // TestRunPreRequestPlugins_AggregatesErrors verifies that runPreRequestPlugins
 // invokes every registered PreRequest plugin regardless of individual failures
 // and returns the joined error covering all failed plugins.
