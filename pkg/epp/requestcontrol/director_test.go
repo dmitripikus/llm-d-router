@@ -587,7 +587,44 @@ func TestDirector_HandleRequest(t *testing.T) {
 					}
 				},
 			},
-		}, {
+		},
+		{
+			name: "preRequest plugin returns typed error surfaces as its status code",
+			reqBodyMap: map[string]any{
+				"model":  model,
+				"prompt": "critical prompt",
+			},
+			mockAdmissionController: &mockAdmissionController{admitErr: nil},
+			schedulerMockSetup: func(m *mockScheduler) {
+				m.scheduleResults = defaultSuccessfulScheduleResults
+			},
+			initialTargetModelName: model,
+			inferenceObjectiveName: objectiveName,
+			preRequestPlugin: &mockPreRequestPlugin{
+				name: "failing-pre-request-plugin",
+				err:  errcommon.Error{Code: errcommon.PreconditionFailed, Msg: "plugin rejected request"},
+			},
+			wantErrCode: errcommon.PreconditionFailed,
+		},
+		{
+			name: "preRequest plugin returns untyped error collapses to Internal",
+			reqBodyMap: map[string]any{
+				"model":  model,
+				"prompt": "critical prompt",
+			},
+			mockAdmissionController: &mockAdmissionController{admitErr: nil},
+			schedulerMockSetup: func(m *mockScheduler) {
+				m.scheduleResults = defaultSuccessfulScheduleResults
+			},
+			initialTargetModelName: model,
+			inferenceObjectiveName: objectiveName,
+			preRequestPlugin: &mockPreRequestPlugin{
+				name: "failing-untyped-pre-request-plugin",
+				err:  errors.New("plugin exploded"),
+			},
+			wantErrCode: errcommon.Internal,
+		},
+		{
 			name: "successful request with model rewrite",
 			reqBodyMap: map[string]any{
 				"model":  modelToBeRewritten,

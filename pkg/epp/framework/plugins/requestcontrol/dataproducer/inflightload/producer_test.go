@@ -647,7 +647,7 @@ func TestInFlightLoadProducer_ExcludeOutputTokens_PrefillReleasedAtStartOfStream
 			"decode":  {TargetEndpoints: []fwksched.Endpoint{newStubSchedulingEndpoint("decode-endpoint")}},
 		},
 	}
-	producer.PreRequest(ctx, req, res)
+	_ = producer.PreRequest(ctx, req, res)
 	require.Equal(t, int64(1), producer.requestTracker.get(prefillID))
 	require.Equal(t, int64(1), producer.requestTracker.get(decodeID))
 	require.Equal(t, int64(4), producer.tokenTracker.get(prefillID))
