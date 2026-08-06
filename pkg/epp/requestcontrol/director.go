@@ -500,14 +500,19 @@ func (d *Director) prepareRequest(ctx context.Context, reqCtx *handlers.RequestC
 	}
 
 	if err := d.runPreRequestPlugins(ctx, reqCtx.SchedulingRequest, result); err != nil {
-		// Preserve a typed errcommon.Error from a plugin so its status code
-		// (e.g. PreconditionFailed) reaches Envoy intact, even after the
-		// wrapping applied by runPreRequestPlugins (fmt.Errorf + errors.Join).
-		// Fall through to Internal for untyped/multiple errors so response
-		// building does not fall through to Unknown in BuildErrResponse.
-		var e errcommon.Error
-		if errors.As(err, &e) {
-			return reqCtx, e
+		// Preserve a typed errcommon.Error from a single failing plugin so its
+		// status code (e.g. PreconditionFailed) reaches Envoy intact, even
+		// after the wrapping applied by runPreRequestPlugins (fmt.Errorf +
+		// errors.Join). Multiple failures collapse to Internal so all their
+		// messages reach the client via the joined error text; picking one
+		// typed code arbitrarily would drop the others. Untyped failures also
+		// collapse to Internal so response building does not fall through to
+		// Unknown in BuildErrResponse.
+		if u, ok := err.(interface{ Unwrap() []error }); ok && len(u.Unwrap()) == 1 {
+			var e errcommon.Error
+			if errors.As(err, &e) {
+				return reqCtx, e
+			}
 		}
 		return reqCtx, errcommon.Error{Code: errcommon.Internal, Msg: err.Error()}
 	}

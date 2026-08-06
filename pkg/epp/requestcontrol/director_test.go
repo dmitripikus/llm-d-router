@@ -419,7 +419,7 @@ func TestDirector_HandleRequest(t *testing.T) {
 		admitRequestDenialError error                    // Expected denial error from admission plugin
 		dataProducerPlugin      *mockDataProducerPlugin
 		screener                *mockScreener
-		preRequestPlugin        *mockPreRequestPlugin
+		preRequestPlugins       []*mockPreRequestPlugin
 		requestHeaderPlugin     *mockRequestHeaderPlugin
 		wantMutatedBody         map[string]any
 		fairnessIDHeader        string // If non-empty, set as metadata.FlowFairnessIDKey on the incoming request.
@@ -579,14 +579,14 @@ func TestDirector_HandleRequest(t *testing.T) {
 				"new_key": "new_value",
 			},
 			inferenceObjectiveName: objectiveName,
-			preRequestPlugin: &mockPreRequestPlugin{
+			preRequestPlugins: []*mockPreRequestPlugin{{
 				name: "test-pre-request-plugin",
 				modifyFn: func(request *fwksched.InferenceRequest) {
 					if payloadMap, ok := request.Body.Payload.(fwkrh.PayloadMap); ok {
 						payloadMap["new_key"] = "new_value"
 					}
 				},
-			},
+			}},
 		},
 		{
 			name: "preRequest plugin returns typed error surfaces as its status code",
@@ -600,10 +600,10 @@ func TestDirector_HandleRequest(t *testing.T) {
 			},
 			initialTargetModelName: model,
 			inferenceObjectiveName: objectiveName,
-			preRequestPlugin: &mockPreRequestPlugin{
+			preRequestPlugins: []*mockPreRequestPlugin{{
 				name: "failing-pre-request-plugin",
 				err:  errcommon.Error{Code: errcommon.PreconditionFailed, Msg: "plugin rejected request"},
-			},
+			}},
 			wantErrCode: errcommon.PreconditionFailed,
 		},
 		{
@@ -618,9 +618,57 @@ func TestDirector_HandleRequest(t *testing.T) {
 			},
 			initialTargetModelName: model,
 			inferenceObjectiveName: objectiveName,
-			preRequestPlugin: &mockPreRequestPlugin{
+			preRequestPlugins: []*mockPreRequestPlugin{{
 				name: "failing-untyped-pre-request-plugin",
 				err:  errors.New("plugin exploded"),
+			}},
+			wantErrCode: errcommon.Internal,
+		},
+		{
+			name: "multiple typed preRequest plugin failures collapse to Internal",
+			reqBodyMap: map[string]any{
+				"model":  model,
+				"prompt": "critical prompt",
+			},
+			mockAdmissionController: &mockAdmissionController{admitErr: nil},
+			schedulerMockSetup: func(m *mockScheduler) {
+				m.scheduleResults = defaultSuccessfulScheduleResults
+			},
+			initialTargetModelName: model,
+			inferenceObjectiveName: objectiveName,
+			preRequestPlugins: []*mockPreRequestPlugin{
+				{
+					name: "failing-typed-a",
+					err:  errcommon.Error{Code: errcommon.PreconditionFailed, Msg: "a rejected"},
+				},
+				{
+					name: "failing-typed-b",
+					err:  errcommon.Error{Code: errcommon.BadRequest, Msg: "b rejected"},
+				},
+			},
+			wantErrCode: errcommon.Internal,
+		},
+		{
+			name: "mixed typed and untyped preRequest failures collapse to Internal",
+			reqBodyMap: map[string]any{
+				"model":  model,
+				"prompt": "critical prompt",
+			},
+			mockAdmissionController: &mockAdmissionController{admitErr: nil},
+			schedulerMockSetup: func(m *mockScheduler) {
+				m.scheduleResults = defaultSuccessfulScheduleResults
+			},
+			initialTargetModelName: model,
+			inferenceObjectiveName: objectiveName,
+			preRequestPlugins: []*mockPreRequestPlugin{
+				{
+					name: "failing-typed",
+					err:  errcommon.Error{Code: errcommon.PreconditionFailed, Msg: "typed rejected"},
+				},
+				{
+					name: "failing-untyped",
+					err:  errors.New("untyped exploded"),
+				},
 			},
 			wantErrCode: errcommon.Internal,
 		},
@@ -1025,8 +1073,12 @@ func TestDirector_HandleRequest(t *testing.T) {
 				if test.screener != nil {
 					config = config.WithScreeners(test.screener)
 				}
-				if test.preRequestPlugin != nil {
-					config = config.WithPreRequestPlugins(test.preRequestPlugin)
+				if len(test.preRequestPlugins) > 0 {
+					plugins := make([]fwkrc.PreRequest, len(test.preRequestPlugins))
+					for i, p := range test.preRequestPlugins {
+						plugins[i] = p
+					}
+					config = config.WithPreRequestPlugins(plugins...)
 				}
 				if test.requestHeaderPlugin != nil {
 					config = config.WithRequestHeaderPlugins(test.requestHeaderPlugin)
