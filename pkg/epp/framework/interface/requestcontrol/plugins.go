@@ -49,6 +49,10 @@ type Screener interface {
 // A non-nil error indicates the plugin could not complete its work; the director runs
 // every registered PreRequest plugin and aggregates their errors before failing the request.
 //
+// Return a github.com/llm-d/llm-d-router/pkg/common/error.Error so the director can map
+// the failure to the intended HTTP status; any other error type is reported to the client
+// as an Internal error.
+//
 // Every registered plugin runs even when a peer has already failed the request, so any
 // side effect published here outlives the failure. Plugins must ensure such state is
 // cleaned up by HandleResponseBody, which the director invokes on abort for every
