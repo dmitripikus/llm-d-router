@@ -269,6 +269,61 @@ func runChatCompletionWithAudio() (string, string) {
 	return runRawChatCompletion(body)
 }
 
+// runChatCompletionWithVideos sends a multimodal chat completion request with one or more
+// video_url content blocks. When called with no arguments it defaults to testVideoURL.
+// Returns the namespace and pod name from the response headers.
+func runChatCompletionWithVideos(videoURLs ...string) (string, string) {
+	if len(videoURLs) == 0 {
+		videoURLs = []string{testVideoURL}
+	}
+	ginkgo.By(fmt.Sprintf("Sending Multimodal Chat Completion Request with %d videos", len(videoURLs)))
+	var sb strings.Builder
+	for _, u := range videoURLs {
+		fmt.Fprintf(&sb, `{"type":"video_url","video_url":{"url":%q}},`, u)
+	}
+	body := fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":[%s{"type":"text","text":"What is happening in these videos?"}]}]}`,
+		simModelName, sb.String())
+	return runRawChatCompletion(body)
+}
+
+// runChatCompletionWithAudios sends a multimodal chat completion request with one or more
+// input_audio content blocks. When called with no arguments it defaults to testAudioData.
+// Returns the namespace and pod name from the response headers.
+func runChatCompletionWithAudios(audioDatas ...string) (string, string) {
+	if len(audioDatas) == 0 {
+		audioDatas = []string{testAudioData}
+	}
+	ginkgo.By(fmt.Sprintf("Sending Multimodal Chat Completion Request with %d audio clips", len(audioDatas)))
+	var sb strings.Builder
+	for _, d := range audioDatas {
+		fmt.Fprintf(&sb, `{"type":"input_audio","input_audio":{"data":%q,"format":"wav"}},`, d)
+	}
+	body := fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":[%s{"type":"text","text":"What is being said in these audio clips?"}]}],"max_tokens":100}`,
+		simModelName, sb.String())
+	return runRawChatCompletion(body)
+}
+
+// runChatCompletionWithMixedMedia sends a multimodal chat completion request combining
+// image_url, input_audio, and video_url content blocks in a single request.
+// Returns the namespace and pod name from the response headers.
+func runChatCompletionWithMixedMedia(imageURLs, audioDatas, videoURLs []string) (string, string) {
+	ginkgo.By(fmt.Sprintf("Sending Mixed-Media Chat Completion Request: %d images + %d audio + %d video",
+		len(imageURLs), len(audioDatas), len(videoURLs)))
+	var sb strings.Builder
+	for i, u := range imageURLs {
+		fmt.Fprintf(&sb, `{"type":"image_url","image_url":{"url":%q},"uuid":"image-%d"},`, u, i)
+	}
+	for _, d := range audioDatas {
+		fmt.Fprintf(&sb, `{"type":"input_audio","input_audio":{"data":%q,"format":"wav"}},`, d)
+	}
+	for _, u := range videoURLs {
+		fmt.Fprintf(&sb, `{"type":"video_url","video_url":{"url":%q}},`, u)
+	}
+	body := fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":[%s{"type":"text","text":"Describe everything you see and hear."}]}],"max_tokens":150}`,
+		simModelName, sb.String())
+	return runRawChatCompletion(body)
+}
+
 func runStreamingCompletion(prompt string, theModel openai.CompletionNewParamsModel) (string, string) {
 	ginkgo.By(fmt.Sprintf("Sending Streaming Completion Request: (port %d) model=%s", getPort(), theModel))
 	body := fmt.Sprintf(`{"model":"%s","prompt":"%s","max_tokens":50,"stream":true}`, theModel, prompt)

@@ -640,6 +640,25 @@ var _ = ginkgo.Describe("Run end to end tests", func() {
 			gomega.Expect(nsHdr).Should(gomega.Equal(nsName))
 			gomega.Expect(podHdr).Should(gomega.BeElementOf(prefillDecodePods))
 
+			// Multi-audio request: two input_audio blocks in a single request
+			nsHdr, podHdr = runChatCompletionWithAudios(testAudioData, testAudioData)
+			gomega.Expect(nsHdr).Should(gomega.Equal(nsName))
+			gomega.Expect(podHdr).Should(gomega.BeElementOf(prefillDecodePods))
+
+			// Multi-video request: two video_url blocks in a single request
+			nsHdr, podHdr = runChatCompletionWithVideos(testVideoURL, testVideoURL)
+			gomega.Expect(nsHdr).Should(gomega.Equal(nsName))
+			gomega.Expect(podHdr).Should(gomega.BeElementOf(prefillDecodePods))
+
+			// Mixed-media request: image + audio + video combined in one request
+			nsHdr, podHdr = runChatCompletionWithMixedMedia(
+				[]string{testImageURL},
+				[]string{testAudioData},
+				[]string{testVideoURL},
+			)
+			gomega.Expect(nsHdr).Should(gomega.Equal(nsName))
+			gomega.Expect(podHdr).Should(gomega.BeElementOf(prefillDecodePods))
+
 			// image_embeds request: pre-encoded tensor, encode stage skipped, routes to prefill-decode pod
 			nsHdr, podHdr = runChatCompletionWithImageEmbeds()
 			gomega.Expect(nsHdr).Should(gomega.Equal(nsName))
@@ -652,12 +671,13 @@ var _ = ginkgo.Describe("Run end to end tests", func() {
 			gomega.Expect(decodeOnlyCount).Should(gomega.Equal(2))
 			gomega.Expect(decodeOnlyCountllmDEpp).Should(gomega.Equal(2))
 
-			// Metrics: encode-decode decisions recorded (2 single-image + 1 multi-image + 1 video + 1 audio)
+			// Metrics: encode-decode decisions recorded
+			// (2 single-image + 1 multi-image + 1 video + 1 audio + 1 multi-audio + 1 multi-video + 1 mixed-media)
 			labelFilter := fmt.Sprintf(`decision_type=%q,model_name="%s"`, disagg.DecisionTypeEncodeDecode, simModelName)
 			encodeDecodeCount := getCounterMetric(metricsURL, "llm_d_inference_scheduler_disagg_decision_total", labelFilter)
 			encodeDecodeCountllmDEpp := getCounterMetric(metricsURL, "llm_d_epp_disagg_decision_total", labelFilter)
-			gomega.Expect(encodeDecodeCount).Should(gomega.Equal(5))
-			gomega.Expect(encodeDecodeCountllmDEpp).Should(gomega.Equal(5))
+			gomega.Expect(encodeDecodeCount).Should(gomega.Equal(8))
+			gomega.Expect(encodeDecodeCountllmDEpp).Should(gomega.Equal(8))
 
 			testutils.DeleteObjects(testConfig, epp, nsName)
 			testutils.DeleteObjects(testConfig, modelServers, nsName)
@@ -714,6 +734,13 @@ var _ = ginkgo.Describe("Run end to end tests", func() {
 			gomega.Expect(nsHdr).Should(gomega.Equal(nsName))
 			gomega.Expect(podHdr).Should(gomega.BeElementOf(decodePods))
 
+			// Audio request: input_audio triggers encode stage, decode handled by decode pod
+			// TODO(#1253): when the commented-out multimodal counter block below is re-enabled,
+			// bump epdCount+edCount total from 4 to 5.
+			nsHdr, podHdr = runChatCompletionWithAudio()
+			gomega.Expect(nsHdr).Should(gomega.Equal(nsName))
+			gomega.Expect(podHdr).Should(gomega.BeElementOf(decodePods))
+
 			// image_embeds request: pre-encoded tensor, encode stage skipped, routes to decode pod
 			nsHdr, podHdr = runChatCompletionWithImageEmbeds()
 			gomega.Expect(nsHdr).Should(gomega.Equal(nsName))
@@ -730,19 +757,19 @@ var _ = ginkgo.Describe("Run end to end tests", func() {
 			gomega.Expect(pdCountllmDEpp + doCountllmDEpp).Should(gomega.Equal(2))
 
 			// re-enable it after https://github.com/llm-d/llm-d-router/issues/1253 gets fixed
-			// Metrics: 4 multimodal requests each produce either encode-prefill-decode or encode-decode
+			// Metrics: 5 multimodal requests each produce either encode-prefill-decode or encode-decode
 			// (encode-decode occurs if the prefix cache hits on the second same-image request).
-			// The 3 requests with unique content (1st image, multi-image, video) always produce encode-prefill-decode.
+			// The 4 requests with unique content (1st image, multi-image, video, audio) always produce encode-prefill-decode.
 			// epdLabelFilter := fmt.Sprintf(`decision_type=%q,model_name="%s"`, disagg.DecisionTypeEncodePrefillDecode, simModelName)
 			// edLabelFilter := fmt.Sprintf(`decision_type=%q,model_name="%s"`, disagg.DecisionTypeEncodeDecode, simModelName)
 			// epdCount := getCounterMetric(metricsURL, "llm_d_inference_scheduler_disagg_decision_total", epdLabelFilter)
 			// epdCountllmDEpp := getCounterMetric(metricsURL, "llm_d_epp_disagg_decision_total", epdLabelFilter)
 			// edCount := getCounterMetric(metricsURL, "llm_d_inference_scheduler_disagg_decision_total", edLabelFilter)
 			// edCountllmDEpp := getCounterMetric(metricsURL, "llm_d_epp_disagg_decision_total", edLabelFilter)
-			// gomega.Expect(epdCount).Should(gomega.BeNumerically(">=", 3))
-			// gomega.Expect(epdCountllmDEpp).Should(gomega.BeNumerically(">=", 3))
-			// gomega.Expect(epdCount + edCount).Should(gomega.Equal(4))
-			// gomega.Expect(epdCountllmDEpp + edCountllmDEpp).Should(gomega.Equal(4))
+			// gomega.Expect(epdCount).Should(gomega.BeNumerically(">=", 4))
+			// gomega.Expect(epdCountllmDEpp).Should(gomega.BeNumerically(">=", 4))
+			// gomega.Expect(epdCount + edCount).Should(gomega.Equal(5))
+			// gomega.Expect(epdCountllmDEpp + edCountllmDEpp).Should(gomega.Equal(5))
 
 			testutils.DeleteObjects(testConfig, epp, nsName)
 			testutils.DeleteObjects(testConfig, modelServers, nsName)
@@ -804,6 +831,11 @@ var _ = ginkgo.Describe("Run end to end tests", func() {
 
 			// Video request: all stages handled by single deployment
 			nsHdr, podHdr = runChatCompletionWithVideo()
+			gomega.Expect(nsHdr).Should(gomega.Equal(nsName))
+			gomega.Expect(podHdr).Should(gomega.Equal(epdPods[0]))
+
+			// Audio request: all stages handled by single deployment
+			nsHdr, podHdr = runChatCompletionWithAudio()
 			gomega.Expect(nsHdr).Should(gomega.Equal(nsName))
 			gomega.Expect(podHdr).Should(gomega.Equal(epdPods[0]))
 

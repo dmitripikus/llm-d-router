@@ -17,7 +17,10 @@ limitations under the License.
 package proxy
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -313,6 +316,11 @@ func videoURLItem(url string) map[string]any {
 	return map[string]any{"type": "video_url", "video_url": map[string]any{"url": url}}
 }
 
+// audioURLItem builds an audio_url content item.
+func audioURLItem(url string) map[string]any {
+	return map[string]any{"type": "audio_url", "audio_url": map[string]any{"url": url}}
+}
+
 // inlineAudioItem builds an input_audio content item.
 func inlineAudioItem(data, format string) map[string]any {
 	return map[string]any{"type": "input_audio", "input_audio": map[string]any{"data": data, "format": format}}
@@ -383,4 +391,94 @@ func TestFanoutEncoderPrimerDeduplication(t *testing.T) {
 			assert.Equal(t, tt.expectedCalls, requestCount.Load())
 		})
 	}
+}
+
+// TestHandleECSharedStorage_Video verifies video_url items trigger the primer
+// fire-and-forget flow: encoders are called once per distinct video URL, and
+// the request body is passed through to the P/D connector unchanged. Unlike
+// nixl, shared_storage discards encoder responses — no ec_transfer_params
+// should appear on the outgoing prefill body.
+func TestHandleECSharedStorage_Video(t *testing.T) {
+	var encoderCalls atomic.Int32
+	encoderBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		encoderCalls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":""}}]}`))
+	}))
+	defer encoderBackend.Close()
+
+	encoderURL, err := url.Parse(encoderBackend.URL)
+	assert.NoError(t, err)
+	srv := NewProxy(Config{Port: "0", DecoderURL: encoderURL})
+	srv.logger = log.Log
+
+	var capturedBody []byte
+	srv.handlePDConnector = func(_ http.ResponseWriter, r *http.Request, _ string, _ string, _ APIType) {
+		buf, err := io.ReadAll(r.Body)
+		assert.NoError(t, err)
+		capturedBody = buf
+	}
+
+	reqBody, _ := json.Marshal(userMessageRequest(
+		videoURLItem("https://example.com/v1.mp4"),
+		videoURLItem("https://example.com/v2.mp4"),
+	))
+	httpReq := httptest.NewRequest(http.MethodPost, ChatCompletionsPath, io.NopCloser(bytes.NewReader(reqBody)))
+	rw := httptest.NewRecorder()
+
+	srv.handleECSharedStorage(rw, httpReq, "fake-prefiller:8000", []string{encoderURL.Host})
+
+	assert.Equal(t, int32(2), encoderCalls.Load(), "encoder should be called once per distinct video URL")
+	if !assert.NotNil(t, capturedBody, "handlePDConnector should have been invoked") {
+		return
+	}
+	var parsed map[string]any
+	assert.NoError(t, json.Unmarshal(capturedBody, &parsed))
+	_, hasEC := parsed[requestFieldECTransferParams]
+	assert.False(t, hasEC, "shared_storage primer must not add ec_transfer_params to the prefill body")
+}
+
+// TestHandleECSharedStorage_Audio verifies input_audio items trigger the
+// primer once per item. Inline audio is never deduplicated, so two distinct
+// input_audio blocks (even with the same data) produce two encoder calls.
+func TestHandleECSharedStorage_Audio(t *testing.T) {
+	var encoderCalls atomic.Int32
+	encoderBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		encoderCalls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":""}}]}`))
+	}))
+	defer encoderBackend.Close()
+
+	encoderURL, err := url.Parse(encoderBackend.URL)
+	assert.NoError(t, err)
+	srv := NewProxy(Config{Port: "0", DecoderURL: encoderURL})
+	srv.logger = log.Log
+
+	var capturedBody []byte
+	srv.handlePDConnector = func(_ http.ResponseWriter, r *http.Request, _ string, _ string, _ APIType) {
+		buf, err := io.ReadAll(r.Body)
+		assert.NoError(t, err)
+		capturedBody = buf
+	}
+
+	reqBody, _ := json.Marshal(userMessageRequest(
+		inlineAudioItem("aaa", "wav"),
+		inlineAudioItem("bbb", "wav"),
+	))
+	httpReq := httptest.NewRequest(http.MethodPost, ChatCompletionsPath, io.NopCloser(bytes.NewReader(reqBody)))
+	rw := httptest.NewRecorder()
+
+	srv.handleECSharedStorage(rw, httpReq, "fake-prefiller:8000", []string{encoderURL.Host})
+
+	assert.Equal(t, int32(2), encoderCalls.Load(), "encoder should be called once per input_audio item")
+	if !assert.NotNil(t, capturedBody, "handlePDConnector should have been invoked") {
+		return
+	}
+	var parsed map[string]any
+	assert.NoError(t, json.Unmarshal(capturedBody, &parsed))
+	_, hasEC := parsed[requestFieldECTransferParams]
+	assert.False(t, hasEC, "shared_storage primer must not add ec_transfer_params to the prefill body")
 }
