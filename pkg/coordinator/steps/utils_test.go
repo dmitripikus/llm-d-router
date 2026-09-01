@@ -257,8 +257,8 @@ func TestExtractMultimodalEntries(t *testing.T) {
 			t.Fatalf("expected 2 entries, got %d", len(entries))
 		}
 		want := []pipeline.MultimodalEntry{
-			{Index: 0, Hash: "hash1", KwargsData: "d1", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
-			{Index: 1, Hash: "hash2", KwargsData: "d2", Placeholder: pipeline.PlaceholderRange{Offset: 5, Length: 2}},
+			{Index: 0, Modality: ModalityImage, Hash: "hash1", KwargsData: "d1", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Index: 1, Modality: ModalityImage, Hash: "hash2", KwargsData: "d2", Placeholder: pipeline.PlaceholderRange{Offset: 5, Length: 2}},
 		}
 		for i, w := range want {
 			if entries[i] != w {
@@ -519,6 +519,7 @@ func TestValidateSamplingParams(t *testing.T) {
 func TestValidatePlaceholderBounds(t *testing.T) {
 	entry := func(offset, length int) pipeline.MultimodalEntry {
 		return pipeline.MultimodalEntry{
+			Modality:    ModalityImage,
 			Placeholder: pipeline.PlaceholderRange{Offset: offset, Length: length},
 		}
 	}
@@ -579,7 +580,7 @@ func TestBuildMMFeatures_CacheHitSentinelSerializesAsNull(t *testing.T) {
 	// wire it must be JSON null, not "": vLLM decodes "" as an inline tensor and
 	// fails with "Input data was truncated", while null means a cache-hit item.
 	entry := func(kwargs string) pipeline.MultimodalEntry {
-		return pipeline.MultimodalEntry{Hash: testHash, KwargsData: kwargs}
+		return pipeline.MultimodalEntry{Modality: ModalityImage, Hash: testHash, KwargsData: kwargs}
 	}
 
 	t.Run("all cache-hit -> all null", func(t *testing.T) {

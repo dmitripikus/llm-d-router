@@ -369,6 +369,7 @@ func extractMultimodalEntries(features map[string]any) ([]pipeline.MultimodalEnt
 
 		entries[i] = pipeline.MultimodalEntry{
 			Index:      i,
+			Modality:   ModalityImage,
 			Hash:       hash,
 			KwargsData: kwarg,
 			Placeholder: pipeline.PlaceholderRange{

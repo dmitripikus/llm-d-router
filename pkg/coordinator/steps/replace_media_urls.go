@@ -246,6 +246,7 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 func appendMultimodalEntry(reqCtx *pipeline.RequestContext, contentType, b64 string) {
 	reqCtx.MultimodalEntries = append(reqCtx.MultimodalEntries, pipeline.MultimodalEntry{
 		Index:       len(reqCtx.MultimodalEntries),
+		Modality:    ModalityImage,
 		Base64Data:  b64,
 		ContentType: contentType,
 	})
