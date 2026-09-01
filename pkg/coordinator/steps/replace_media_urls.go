@@ -44,7 +44,26 @@ import (
 
 const ReplaceMediaURLsStepName = "replace-media-urls"
 
-const imageURLPartType = "image_url"
+// OpenAI chat content-part type strings the coordinator recognizes as
+// multimodal. URL-based parts (image_url, audio_url, video_url) carry a
+// `url` field that may be an https URL or a data URI. input_audio is
+// always inline: `data` (base64) + `format` (audio codec name).
+const (
+	imageURLPartType   = "image_url"
+	audioURLPartType   = "audio_url"
+	videoURLPartType   = "video_url"
+	inputAudioPartType = "input_audio"
+)
+
+// partTypeModality maps each recognized content-part type to the Modality
+// it represents. Parts whose type is not in this map (text, tool_use,
+// image_embeds, unknown types) are passed through untouched.
+var partTypeModality = map[string]string{
+	imageURLPartType:   ModalityImage,
+	audioURLPartType:   ModalityAudio,
+	videoURLPartType:   ModalityVideo,
+	inputAudioPartType: ModalityAudio,
+}
 
 const defaultContentType = "application/octet-stream"
 
@@ -140,7 +159,8 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 		return nil
 	}
 
-	var imageURLs []imageRef
+	var urlRefs []urlMediaRef
+	var inlineRefs []inlineMediaRef
 	for msgIdx, msg := range messages {
 		msgMap, ok := msg.(map[string]any)
 		if !ok {
@@ -155,32 +175,56 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 			if !ok {
 				continue
 			}
-			if partMap["type"] != imageURLPartType {
+			partType, _ := partMap["type"].(string)
+			modality, isMedia := partTypeModality[partType]
+			if !isMedia {
 				continue
 			}
-			imageURL, ok := partMap[imageURLPartType].(map[string]any)
+			if partType == inputAudioPartType {
+				innerMap, ok := partMap[inputAudioPartType].(map[string]any)
+				if !ok {
+					continue
+				}
+				data, _ := innerMap["data"].(string)
+				if data == "" {
+					continue
+				}
+				format, _ := innerMap["format"].(string)
+				inlineRefs = append(inlineRefs, inlineMediaRef{
+					msgIdx:   msgIdx,
+					partIdx:  partIdx,
+					modality: modality,
+					data:     data,
+					format:   format,
+				})
+				continue
+			}
+			// URL-based parts: image_url, audio_url, video_url
+			innerMap, ok := partMap[partType].(map[string]any)
 			if !ok {
 				continue
 			}
-			url, ok := imageURL["url"].(string)
+			url, ok := innerMap["url"].(string)
 			if !ok {
 				continue
 			}
-			imageURLs = append(imageURLs, imageRef{
+			urlRefs = append(urlRefs, urlMediaRef{
 				msgIdx:   msgIdx,
 				partIdx:  partIdx,
+				modality: modality,
 				url:      url,
-				imageURL: imageURL,
+				urlMap:   innerMap,
 			})
 		}
 	}
 
-	if len(imageURLs) == 0 {
+	totalEntries := len(urlRefs) + len(inlineRefs)
+	if totalEntries == 0 {
 		return nil
 	}
 
-	if s.maxMultimodalEntries > 0 && len(imageURLs) > s.maxMultimodalEntries {
-		return fmt.Errorf("too many multimodal entries: got %d, max %d: %w", len(imageURLs), s.maxMultimodalEntries, pipeline.ErrBadRequest)
+	if s.maxMultimodalEntries > 0 && totalEntries > s.maxMultimodalEntries {
+		return fmt.Errorf("too many multimodal entries: got %d, max %d: %w", totalEntries, s.maxMultimodalEntries, pipeline.ErrBadRequest)
 	}
 
 	// Cancel any in-flight downloads when Execute returns early (cancelled
@@ -191,8 +235,8 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 	g, gCtx := errgroup.WithContext(ctx)
 	g.SetLimit(s.maxConcurrentDownloads)
 
-	results := make([]downloadResult, len(imageURLs))
-	for i, ref := range imageURLs {
+	results := make([]downloadResult, len(urlRefs))
+	for i, ref := range urlRefs {
 		if err := gCtx.Err(); err != nil {
 			break
 		}
@@ -201,13 +245,18 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 			if err != nil {
 				return fmt.Errorf("parsing data URI at message %d part %d: %w: %w", ref.msgIdx, ref.partIdx, err, pipeline.ErrBadRequest)
 			}
-			if !allowedImageContentType(contentType) {
-				return fmt.Errorf("data URI content type %q not allowed at message %d part %d: %w", contentType, ref.msgIdx, ref.partIdx, pipeline.ErrBadRequest)
+			if !allowedContentTypeForModality(contentType, ref.modality) {
+				return fmt.Errorf("data URI content type %q not allowed for %s at message %d part %d: %w", contentType, ref.modality, ref.msgIdx, ref.partIdx, pipeline.ErrBadRequest)
 			}
 			results[i] = downloadResult{ref: ref, base64Data: b64, contentType: contentType}
 			continue
 		}
 		g.Go(func() error {
+			// The download path deliberately does NOT enforce
+			// allowedContentTypeForModality against the server's Content-Type —
+			// existing behavior for image_url (see TestReplaceMediaURLsStep_EmptyContentType).
+			// Audio/video URLs inherit the same permissive treatment. Fixing
+			// this uniformly is a separate concern (Section 4 / security review).
 			data, contentType, err := s.download(gCtx, ref.url)
 			if err != nil {
 				return fmt.Errorf("downloading %s: %w", ref.url, err)
@@ -223,7 +272,7 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 
 	// Log proxy presence only: HTTP(S)_PROXY URLs can carry basic-auth
 	// credentials (http://user:pass@host) that must not reach logs.
-	logger.V(logutil.TRACE).Info("downloading images", "count", len(imageURLs), "http_proxy_set", os.Getenv("HTTP_PROXY") != "", "https_proxy_set", os.Getenv("HTTPS_PROXY") != "")
+	logger.V(logutil.TRACE).Info("downloading media", "count", len(urlRefs), "http_proxy_set", os.Getenv("HTTP_PROXY") != "", "https_proxy_set", os.Getenv("HTTPS_PROXY") != "")
 
 	if err := g.Wait(); err != nil {
 		return err
@@ -234,10 +283,39 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 
 	for _, r := range results {
 		if !strings.HasPrefix(r.ref.url, "data:") {
-			r.ref.imageURL["url"] = fmt.Sprintf("data:%s;base64,%s", r.contentType, r.base64Data)
+			r.ref.urlMap["url"] = fmt.Sprintf("data:%s;base64,%s", r.contentType, r.base64Data)
 		}
+		// Only image entries feed into MultimodalEntries today. Audio and
+		// video get validated and inlined but do not travel to the encoder
+		// fanout — the encoder wire contract for those modalities is not
+		// yet defined (see coordinator-audio-video-plan.md H1).
+		if r.ref.modality == ModalityImage {
+			appendMultimodalEntry(reqCtx, r.contentType, r.base64Data)
+		}
+	}
 
-		appendMultimodalEntry(reqCtx, r.contentType, r.base64Data)
+	// input_audio parts carry inline base64 already; no download needed,
+	// but MIME and size must still be validated so a caller cannot smuggle
+	// text or oversized payloads through the audio slot.
+	for _, ref := range inlineRefs {
+		contentType, err := audioFormatToMIME(ref.format)
+		if err != nil {
+			return fmt.Errorf("input_audio at message %d part %d: %w: %w",
+				ref.msgIdx, ref.partIdx, err, pipeline.ErrBadRequest)
+		}
+		if !allowedContentTypeForModality(contentType, ref.modality) {
+			return fmt.Errorf("input_audio content type %q not allowed at message %d part %d: %w",
+				contentType, ref.msgIdx, ref.partIdx, pipeline.ErrBadRequest)
+		}
+		// Base64 length upper-bounds decoded byte count at (3n+2)/4. Reject
+		// before decoding when the string alone already exceeds the cap.
+		maxBase64Len := (s.maxDownloadSize*4 + 2) / 3
+		if int64(len(ref.data)) > maxBase64Len {
+			return fmt.Errorf("input_audio at message %d part %d exceeds size limit: %w",
+				ref.msgIdx, ref.partIdx, pipeline.ErrBadRequest)
+		}
+		// Body passes through unmodified: the "data" field already carries
+		// the base64 payload the backend needs.
 	}
 
 	return nil
@@ -299,32 +377,95 @@ func (s *ReplaceMediaURLsStep) download(ctx context.Context, rawURL string) ([]b
 	return data, contentType, nil
 }
 
-type imageRef struct {
+// urlMediaRef locates a URL-based multimodal content part (image_url /
+// audio_url / video_url) in the request body. urlMap is the inner map
+// carrying the "url" key so the download result can be inlined in place.
+type urlMediaRef struct {
 	msgIdx   int
 	partIdx  int
+	modality string
 	url      string
-	imageURL map[string]any
+	urlMap   map[string]any
+}
+
+// inlineMediaRef locates an input_audio content part. Its base64 payload
+// is already inline in the request body so no download is needed —
+// only MIME + size validation.
+type inlineMediaRef struct {
+	msgIdx   int
+	partIdx  int
+	modality string
+	data     string // base64 payload
+	format   string // "wav", "mp3", ...
 }
 
 type downloadResult struct {
-	ref         imageRef
+	ref         urlMediaRef
 	base64Data  string
 	contentType string
 }
 
-// allowedImageContentTypes is the set of data URI media types a vision model
-// accepts. Non-image payloads (HTML, SVG, scripts, audio, video) are rejected
-// so they are not inlined and forwarded downstream.
-var allowedImageContentTypes = map[string]struct{}{
-	"image/jpeg": {},
-	"image/png":  {},
-	"image/gif":  {},
-	"image/webp": {},
+// allowedContentTypesByModality is the set of data URI / inline media types
+// each modality accepts. Data URIs whose declared MIME type is not in the
+// entry for the surrounding content-part's modality are rejected so they
+// are not inlined and forwarded downstream. The map is intentionally
+// permissive for common containers; codec-level restrictions are the
+// backend's job.
+var allowedContentTypesByModality = map[string]map[string]struct{}{
+	ModalityImage: {
+		"image/jpeg": {},
+		"image/png":  {},
+		"image/gif":  {},
+		"image/webp": {},
+	},
+	ModalityAudio: {
+		"audio/wav":    {},
+		"audio/x-wav":  {},
+		"audio/mpeg":   {},
+		"audio/mp3":    {},
+		"audio/flac":   {},
+		"audio/x-flac": {},
+		"audio/ogg":    {},
+		"audio/opus":   {},
+		"audio/webm":   {},
+	},
+	ModalityVideo: {
+		"video/mp4":       {},
+		"video/webm":      {},
+		"video/quicktime": {},
+		"video/mpeg":      {},
+		"video/ogg":       {},
+	},
 }
 
-func allowedImageContentType(contentType string) bool {
-	_, ok := allowedImageContentTypes[strings.ToLower(strings.TrimSpace(contentType))]
+func allowedContentTypeForModality(contentType, modality string) bool {
+	allowed, ok := allowedContentTypesByModality[modality]
+	if !ok {
+		return false
+	}
+	_, ok = allowed[strings.ToLower(strings.TrimSpace(contentType))]
 	return ok
+}
+
+// audioFormatMIME maps OpenAI's input_audio.format values to canonical MIME
+// types. OpenAI documents "wav" and "mp3" today; the additional entries
+// mirror what the backend commonly accepts.
+var audioFormatMIME = map[string]string{
+	"wav":  "audio/wav",
+	"mp3":  "audio/mpeg",
+	"flac": "audio/flac",
+	"opus": "audio/opus",
+	"ogg":  "audio/ogg",
+	"webm": "audio/webm",
+}
+
+func audioFormatToMIME(format string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(format))
+	mime, ok := audioFormatMIME[normalized]
+	if !ok {
+		return "", fmt.Errorf("unsupported input_audio format %q", format)
+	}
+	return mime, nil
 }
 
 func parseDataURI(uri string) (contentType, b64 string, err error) {
