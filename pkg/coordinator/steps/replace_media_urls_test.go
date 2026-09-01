@@ -677,7 +677,7 @@ func TestReplaceMediaURLsStep_DownloadInvalidURL(t *testing.T) {
 
 	// 0x7f (DEL) is an invalid control character in a URL; NewRequestWithContext
 	// fails before any network call.
-	_, _, err := rmu.download(context.Background(), "http://\x7f/control-char")
+	_, _, err := rmu.download(context.Background(), "http://\x7f/control-char", ModalityImage)
 	if err == nil {
 		t.Fatal("expected error building request for URL with control character")
 	}
@@ -732,7 +732,7 @@ func TestReplaceMediaURLsStep_RejectsOversizedContentLength(t *testing.T) {
 
 	rmu := newLoopbackStep(t, map[string]any{"max_download_size": 1})
 
-	_, _, err := rmu.download(context.Background(), imageServer.URL+"/big.png")
+	_, _, err := rmu.download(context.Background(), imageServer.URL+"/big.png", ModalityImage)
 	if err == nil {
 		t.Fatal("expected error for oversized Content-Length")
 	}
@@ -845,7 +845,7 @@ func TestReplaceMediaURLsStep_DownloadTruncatedBody(t *testing.T) {
 
 	rmu := newLoopbackStep(t, map[string]any{})
 
-	_, _, err := rmu.download(context.Background(), imageServer.URL+"/truncated")
+	_, _, err := rmu.download(context.Background(), imageServer.URL+"/truncated", ModalityImage)
 	if err == nil {
 		t.Fatal("expected error reading truncated response body")
 	}
@@ -927,7 +927,7 @@ func TestAddressGuard_HostAllowed(t *testing.T) {
 func TestReplaceMediaURLsStep_RejectsScheme(t *testing.T) {
 	rmu := newLoopbackStep(t, map[string]any{})
 	for _, raw := range []string{"file:///etc/passwd", "gopher://host/1", "ftp://host/x"} {
-		_, _, err := rmu.download(context.Background(), raw)
+		_, _, err := rmu.download(context.Background(), raw, ModalityImage)
 		if err == nil {
 			t.Fatalf("expected scheme %q to be rejected", raw)
 		}
@@ -941,7 +941,7 @@ func TestReplaceMediaURLsStep_RejectsScheme(t *testing.T) {
 // generic gateway fault, so the handler maps it to a 4xx.
 func TestReplaceMediaURLsStep_BlocksMetadataIP(t *testing.T) {
 	rmu := newLoopbackStep(t, map[string]any{"download_timeout": "2s"})
-	_, _, err := rmu.download(context.Background(), "http://169.254.169.254/latest/meta-data/")
+	_, _, err := rmu.download(context.Background(), "http://169.254.169.254/latest/meta-data/", ModalityImage)
 	if err == nil {
 		t.Fatal("expected metadata IP fetch to be blocked")
 	}
@@ -961,7 +961,7 @@ func TestReplaceMediaURLsStep_BlocksRedirectToPrivate(t *testing.T) {
 	// Loopback allowed so the first hop (the httptest server) connects; the
 	// metadata redirect target is link-local and stays blocked regardless.
 	rmu := newLoopbackStep(t, map[string]any{"download_timeout": "2s"})
-	_, _, err := rmu.download(context.Background(), redirector.URL+"/start")
+	_, _, err := rmu.download(context.Background(), redirector.URL+"/start", ModalityImage)
 	if err == nil {
 		t.Fatal("expected redirect to metadata IP to be blocked")
 	}
@@ -989,7 +989,7 @@ func TestReplaceMediaURLsStep_BlocksHostnameResolvingToPrivate(t *testing.T) {
 		t.Fatal(err)
 	}
 	step := built.(*ReplaceMediaURLsStep)
-	_, _, err = step.download(context.Background(), "http://localhost:"+port+"/x")
+	_, _, err = step.download(context.Background(), "http://localhost:"+port+"/x", ModalityImage)
 	if err == nil {
 		t.Fatal("expected hostname resolving to loopback to be blocked")
 	}
@@ -1014,12 +1014,12 @@ func TestReplaceMediaURLsStep_DomainAllowlist(t *testing.T) {
 	}
 
 	allowed := newLoopbackStep(t, map[string]any{"allowed_domains": []any{hostname}})
-	if _, _, err := allowed.download(context.Background(), server.URL+"/ok.png"); err != nil {
+	if _, _, err := allowed.download(context.Background(), server.URL+"/ok.png", ModalityImage); err != nil {
 		t.Fatalf("listed host must be fetchable: %v", err)
 	}
 
 	denied := newLoopbackStep(t, map[string]any{"allowed_domains": []any{"images.example.com"}})
-	_, _, err = denied.download(context.Background(), server.URL+"/ok.png")
+	_, _, err = denied.download(context.Background(), server.URL+"/ok.png", ModalityImage)
 	if err == nil {
 		t.Fatal("unlisted host must be rejected")
 	}
@@ -1518,5 +1518,217 @@ func TestReplaceMediaURLsStep_MaxEntriesCountsAllModalities(t *testing.T) {
 	}
 	if !errors.Is(err, pipeline.ErrBadRequest) {
 		t.Fatalf("expected ErrBadRequest, got %v", err)
+	}
+}
+
+// ---- Section 4: per-modality caps and allowlists ---------------------------
+
+// TestReplaceMediaURLsStep_MaxVideoDownloadSize_OverridesGlobal shows a
+// video payload accepted with max_video_download_size high enough while the
+// same body under max_download_size alone is rejected. Locks in the
+// per-modality override path.
+func TestReplaceMediaURLsStep_MaxVideoDownloadSize_OverridesGlobal(t *testing.T) {
+	// 2 MB video payload.
+	payload := make([]byte, 2*1024*1024)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	body := func() *pipeline.RequestContext {
+		return &pipeline.RequestContext{Body: map[string]any{
+			"messages": []any{
+				map[string]any{
+					"role": "user",
+					"content": []any{
+						map[string]any{"type": "video_url", "video_url": map[string]any{"url": server.URL + "/clip.mp4"}},
+					},
+				},
+			},
+		}}
+	}
+
+	// Rejected under a 1 MB global cap.
+	tight := newLoopbackStep(t, map[string]any{"max_download_size": 1})
+	err := tight.Execute(context.Background(), body())
+	if err == nil || !errors.Is(err, pipeline.ErrBadRequest) {
+		t.Fatalf("expected ErrBadRequest under 1 MB global cap, got %v", err)
+	}
+
+	// Accepted when max_video_download_size raises the video-only cap.
+	loose := newLoopbackStep(t, map[string]any{
+		"max_download_size":       1,
+		"max_video_download_size": 5,
+	})
+	if err := loose.Execute(context.Background(), body()); err != nil {
+		t.Fatalf("expected acceptance under 5 MB video-specific cap, got %v", err)
+	}
+}
+
+// TestReplaceMediaURLsStep_MaxAudioDownloadSize_FallsBackToGlobal confirms
+// that when no per-modality override is set, audio downloads honor the
+// global max_download_size.
+func TestReplaceMediaURLsStep_MaxAudioDownloadSize_FallsBackToGlobal(t *testing.T) {
+	payload := make([]byte, 2*1024*1024)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "audio/wav")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	step := newLoopbackStep(t, map[string]any{"max_download_size": 1})
+	reqCtx := &pipeline.RequestContext{Body: map[string]any{
+		"messages": []any{
+			map[string]any{
+				"role": "user",
+				"content": []any{
+					map[string]any{"type": "audio_url", "audio_url": map[string]any{"url": server.URL + "/clip.wav"}},
+				},
+			},
+		},
+	}}
+	err := step.Execute(context.Background(), reqCtx)
+	if err == nil || !errors.Is(err, pipeline.ErrBadRequest) {
+		t.Fatalf("expected ErrBadRequest when audio has no override and exceeds global cap, got %v", err)
+	}
+}
+
+// TestReplaceMediaURLsStep_InputAudio_UsesAudioCap asserts inline input_audio
+// size validation respects max_audio_download_size, not the global cap.
+func TestReplaceMediaURLsStep_InputAudio_UsesAudioCap(t *testing.T) {
+	step, _ := NewReplaceMediaURLsStep(nil, map[string]any{
+		"max_download_size":       10, // global 10 MB (would allow)
+		"max_audio_download_size": 1,  // audio 1 MB (rejects)
+	})
+	// Base64 length > (4/3) * 1 MB triggers rejection.
+	oversized := strings.Repeat("A", 2*1024*1024)
+	reqCtx := &pipeline.RequestContext{Body: map[string]any{
+		"messages": []any{
+			map[string]any{
+				"role": "user",
+				"content": []any{
+					map[string]any{"type": "input_audio", "input_audio": map[string]any{"data": oversized, "format": "wav"}},
+				},
+			},
+		},
+	}}
+	err := step.Execute(context.Background(), reqCtx)
+	if err == nil || !errors.Is(err, pipeline.ErrBadRequest) {
+		t.Fatalf("expected ErrBadRequest from audio-cap check, got %v", err)
+	}
+}
+
+// TestReplaceMediaURLsStep_RejectsInvalidPerModalityCap covers the three
+// per-modality caps' validation: non-positive and megabyte-overflow values
+// must fail step construction rather than silently disabling the cap.
+func TestReplaceMediaURLsStep_RejectsInvalidPerModalityCap(t *testing.T) {
+	tooLarge := (math.MaxInt-1)/config.BytesPerMB + 1
+	for _, tc := range []struct {
+		name  string
+		param map[string]any
+	}{
+		{"max_image_download_size zero", map[string]any{"max_image_download_size": 0}},
+		{"max_audio_download_size negative", map[string]any{"max_audio_download_size": -1}},
+		{"max_video_download_size overflow", map[string]any{"max_video_download_size": tooLarge}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := NewReplaceMediaURLsStep(nil, tc.param); err == nil {
+				t.Fatalf("expected construction error for %s", tc.name)
+			}
+		})
+	}
+}
+
+// TestReplaceMediaURLsStep_AllowedAudioContentTypes_Overrides swaps in a
+// narrower audio allowlist ({audio/wav}) and asserts (a) audio/wav still
+// passes and (b) audio/mpeg — allowed by the default set — is now rejected.
+func TestReplaceMediaURLsStep_AllowedAudioContentTypes_Overrides(t *testing.T) {
+	step, _ := NewReplaceMediaURLsStep(nil, map[string]any{
+		"allowed_audio_content_types": []any{"audio/wav"},
+	})
+
+	accept := &pipeline.RequestContext{Body: map[string]any{
+		"messages": []any{
+			map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "audio_url", "audio_url": map[string]any{"url": "data:audio/wav;base64,UklGRg=="}},
+			}},
+		},
+	}}
+	if err := step.Execute(context.Background(), accept); err != nil {
+		t.Fatalf("expected audio/wav accepted under override, got %v", err)
+	}
+
+	reject := &pipeline.RequestContext{Body: map[string]any{
+		"messages": []any{
+			map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "audio_url", "audio_url": map[string]any{"url": "data:audio/mpeg;base64,AAAA"}},
+			}},
+		},
+	}}
+	err := step.Execute(context.Background(), reject)
+	if err == nil || !errors.Is(err, pipeline.ErrBadRequest) {
+		t.Fatalf("expected audio/mpeg rejected under audio/wav-only override, got %v", err)
+	}
+}
+
+// TestReplaceMediaURLsStep_AllowedImageContentTypes_Overrides mirrors the
+// audio case for the image allowlist: narrowing to {image/png} rejects the
+// default-allowed image/jpeg.
+func TestReplaceMediaURLsStep_AllowedImageContentTypes_Overrides(t *testing.T) {
+	step, _ := NewReplaceMediaURLsStep(nil, map[string]any{
+		"allowed_image_content_types": []any{"image/png"},
+	})
+	reject := &pipeline.RequestContext{Body: map[string]any{
+		"messages": []any{
+			map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:image/jpeg;base64,/9j/4AAQ"}},
+			}},
+		},
+	}}
+	err := step.Execute(context.Background(), reject)
+	if err == nil || !errors.Is(err, pipeline.ErrBadRequest) {
+		t.Fatalf("expected image/jpeg rejected under image/png-only override, got %v", err)
+	}
+}
+
+// TestReplaceMediaURLsStep_AllowedContentTypes_DefaultsWhenUnset confirms
+// that when no per-modality allowlist is configured, the built-in defaults
+// apply — audio/mpeg (a default entry) is accepted.
+func TestReplaceMediaURLsStep_AllowedContentTypes_DefaultsWhenUnset(t *testing.T) {
+	step, _ := NewReplaceMediaURLsStep(nil, map[string]any{})
+	reqCtx := &pipeline.RequestContext{Body: map[string]any{
+		"messages": []any{
+			map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "audio_url", "audio_url": map[string]any{"url": "data:audio/mpeg;base64,AAAA"}},
+			}},
+		},
+	}}
+	if err := step.Execute(context.Background(), reqCtx); err != nil {
+		t.Fatalf("expected default audio allowlist to accept audio/mpeg, got %v", err)
+	}
+}
+
+// TestReplaceMediaURLsStep_RejectsNonStringAllowedContentType fails
+// construction when a per-modality allowlist entry is not a string. The
+// alternative (silently dropping the bad entry) would be a security
+// downgrade — an operator's intent to lock down the allowlist is lost.
+func TestReplaceMediaURLsStep_RejectsNonStringAllowedContentType(t *testing.T) {
+	_, err := NewReplaceMediaURLsStep(nil, map[string]any{
+		"allowed_audio_content_types": []any{"audio/wav", 42},
+	})
+	if err == nil {
+		t.Fatal("expected construction error for non-string allowlist entry")
+	}
+}
+
+// TestReplaceMediaURLsStep_RejectsNonListAllowedContentTypes fails
+// construction when a per-modality allowlist is set to a non-list value.
+func TestReplaceMediaURLsStep_RejectsNonListAllowedContentTypes(t *testing.T) {
+	_, err := NewReplaceMediaURLsStep(nil, map[string]any{
+		"allowed_video_content_types": "video/mp4",
+	})
+	if err == nil {
+		t.Fatal("expected construction error for non-list allowlist value")
 	}
 }

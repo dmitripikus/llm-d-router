@@ -78,9 +78,20 @@ type ReplaceMediaURLsStep struct {
 	downloadTimeout        time.Duration
 	maxConcurrentDownloads int
 	maxMultimodalEntries   int
-	maxDownloadSize        int64
-	guard                  *addressGuard
-	client                 *http.Client
+	// maxDownloadSize is the default cap applied when a modality has no
+	// per-modality override. Also the fallback used by input_audio size
+	// validation when max_audio_download_size is unset.
+	maxDownloadSize int64
+	// maxDownloadSizeByMod optionally overrides maxDownloadSize per modality
+	// (keys are the ModalityImage / ModalityAudio / ModalityVideo constants).
+	// A missing key means "fall back to maxDownloadSize".
+	maxDownloadSizeByMod map[string]int64
+	// allowedContentTypes is the per-modality MIME allowlist applied to
+	// data URIs and to input_audio inline items. Keys are Modality* constants;
+	// values are lowercase MIME strings.
+	allowedContentTypes map[string]map[string]struct{}
+	guard               *addressGuard
+	client              *http.Client
 }
 
 func NewReplaceMediaURLsStep(_ *gateway.Client, params map[string]any) (pipeline.Step, error) {
@@ -124,6 +135,21 @@ func NewReplaceMediaURLsStep(_ *gateway.Client, params map[string]any) (pipeline
 		maxDownloadSize = int64(v) * config.BytesPerMB
 	}
 
+	// Optional per-modality download caps. Each param, when set, overrides
+	// maxDownloadSize for URLs / inline payloads of that modality. Same
+	// units (MB) and same overflow guard as max_download_size.
+	maxDownloadSizeByMod, err := parsePerModalityDownloadSizes(params)
+	if err != nil {
+		return nil, err
+	}
+
+	// Optional per-modality MIME allowlist overrides. Each param, when set,
+	// replaces the built-in default set for that modality.
+	allowedContentTypes, err := parsePerModalityContentTypes(params)
+	if err != nil {
+		return nil, err
+	}
+
 	guard := &addressGuard{}
 	if v, ok, err := paramBool(params, "allow_private_networks"); err != nil {
 		return nil, err
@@ -143,6 +169,8 @@ func NewReplaceMediaURLsStep(_ *gateway.Client, params map[string]any) (pipeline
 		maxConcurrentDownloads: maxConcurrent,
 		maxMultimodalEntries:   maxEntries,
 		maxDownloadSize:        maxDownloadSize,
+		maxDownloadSizeByMod:   maxDownloadSizeByMod,
+		allowedContentTypes:    allowedContentTypes,
 		guard:                  guard,
 	}
 	step.client = guard.newClient(timeout)
@@ -245,7 +273,7 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 			if err != nil {
 				return fmt.Errorf("parsing data URI at message %d part %d: %w: %w", ref.msgIdx, ref.partIdx, err, pipeline.ErrBadRequest)
 			}
-			if !allowedContentTypeForModality(contentType, ref.modality) {
+			if !s.allowedContentTypeForModality(contentType, ref.modality) {
 				return fmt.Errorf("data URI content type %q not allowed for %s at message %d part %d: %w", contentType, ref.modality, ref.msgIdx, ref.partIdx, pipeline.ErrBadRequest)
 			}
 			results[i] = downloadResult{ref: ref, base64Data: b64, contentType: contentType}
@@ -256,8 +284,8 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 			// allowedContentTypeForModality against the server's Content-Type —
 			// existing behavior for image_url (see TestReplaceMediaURLsStep_EmptyContentType).
 			// Audio/video URLs inherit the same permissive treatment. Fixing
-			// this uniformly is a separate concern (Section 4 / security review).
-			data, contentType, err := s.download(gCtx, ref.url)
+			// this uniformly is a separate concern (security review).
+			data, contentType, err := s.download(gCtx, ref.url, ref.modality)
 			if err != nil {
 				return fmt.Errorf("downloading %s: %w", ref.url, err)
 			}
@@ -303,13 +331,15 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 			return fmt.Errorf("input_audio at message %d part %d: %w: %w",
 				ref.msgIdx, ref.partIdx, err, pipeline.ErrBadRequest)
 		}
-		if !allowedContentTypeForModality(contentType, ref.modality) {
+		if !s.allowedContentTypeForModality(contentType, ref.modality) {
 			return fmt.Errorf("input_audio content type %q not allowed at message %d part %d: %w",
 				contentType, ref.msgIdx, ref.partIdx, pipeline.ErrBadRequest)
 		}
 		// Base64 length upper-bounds decoded byte count at (3n+2)/4. Reject
 		// before decoding when the string alone already exceeds the cap.
-		maxBase64Len := (s.maxDownloadSize*4 + 2) / 3
+		// input_audio size is bounded by the audio-modality cap.
+		sizeCap := s.downloadSizeFor(ref.modality)
+		maxBase64Len := (sizeCap*4 + 2) / 3
 		if int64(len(ref.data)) > maxBase64Len {
 			return fmt.Errorf("input_audio at message %d part %d exceeds size limit: %w",
 				ref.msgIdx, ref.partIdx, pipeline.ErrBadRequest)
@@ -330,7 +360,7 @@ func appendMultimodalEntry(reqCtx *pipeline.RequestContext, contentType, b64 str
 	})
 }
 
-func (s *ReplaceMediaURLsStep) download(ctx context.Context, rawURL string) ([]byte, string, error) {
+func (s *ReplaceMediaURLsStep) download(ctx context.Context, rawURL, modality string) ([]byte, string, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, "", fmt.Errorf("invalid URL: %w: %w", err, pipeline.ErrBadRequest)
@@ -341,6 +371,8 @@ func (s *ReplaceMediaURLsStep) download(ctx context.Context, rawURL string) ([]b
 	if !s.guard.hostAllowed(parsed.Hostname()) {
 		return nil, "", fmt.Errorf("host %q not allowed: %w", parsed.Hostname(), pipeline.ErrBadRequest)
 	}
+
+	sizeCap := s.downloadSizeFor(modality)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
@@ -359,16 +391,16 @@ func (s *ReplaceMediaURLsStep) download(ctx context.Context, rawURL string) ([]b
 		return nil, "", upstreamError(ReplaceMediaURLsStepName, resp.StatusCode, respBody)
 	}
 
-	if resp.ContentLength > s.maxDownloadSize {
-		return nil, "", fmt.Errorf("response too large: Content-Length %d exceeds max %d: %w", resp.ContentLength, s.maxDownloadSize, pipeline.ErrBadRequest)
+	if resp.ContentLength > sizeCap {
+		return nil, "", fmt.Errorf("response too large: Content-Length %d exceeds max %d: %w", resp.ContentLength, sizeCap, pipeline.ErrBadRequest)
 	}
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, s.maxDownloadSize+1))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, sizeCap+1))
 	if err != nil {
 		return nil, "", err
 	}
-	if int64(len(data)) > s.maxDownloadSize {
-		return nil, "", fmt.Errorf("response too large: body exceeds max %d: %w", s.maxDownloadSize, pipeline.ErrBadRequest)
+	if int64(len(data)) > sizeCap {
+		return nil, "", fmt.Errorf("response too large: body exceeds max %d: %w", sizeCap, pipeline.ErrBadRequest)
 	}
 	contentType := resp.Header.Get("Content-Type")
 	if contentType == "" {
@@ -405,13 +437,13 @@ type downloadResult struct {
 	contentType string
 }
 
-// allowedContentTypesByModality is the set of data URI / inline media types
-// each modality accepts. Data URIs whose declared MIME type is not in the
-// entry for the surrounding content-part's modality are rejected so they
-// are not inlined and forwarded downstream. The map is intentionally
-// permissive for common containers; codec-level restrictions are the
-// backend's job.
-var allowedContentTypesByModality = map[string]map[string]struct{}{
+// defaultAllowedContentTypesByModality is the built-in per-modality MIME
+// allowlist applied to data URIs and to input_audio inline items. Operators
+// override individual modality sets via the allowed_{image,audio,video}_content_types
+// params; a modality with no override falls back to the entry here. The map
+// is intentionally permissive for common containers; codec-level restrictions
+// are the backend's job.
+var defaultAllowedContentTypesByModality = map[string]map[string]struct{}{
 	ModalityImage: {
 		"image/jpeg": {},
 		"image/png":  {},
@@ -438,13 +470,118 @@ var allowedContentTypesByModality = map[string]map[string]struct{}{
 	},
 }
 
-func allowedContentTypeForModality(contentType, modality string) bool {
-	allowed, ok := allowedContentTypesByModality[modality]
+// allowedContentTypeForModality reports whether contentType is allowed for
+// modality per the step's configured allowlist. Comparison is
+// case-insensitive with whitespace trimmed.
+func (s *ReplaceMediaURLsStep) allowedContentTypeForModality(contentType, modality string) bool {
+	allowed, ok := s.allowedContentTypes[modality]
 	if !ok {
 		return false
 	}
 	_, ok = allowed[strings.ToLower(strings.TrimSpace(contentType))]
 	return ok
+}
+
+// downloadSizeFor returns the per-modality download cap when the operator set
+// one, else the global default. Callers use this both for HTTP downloads
+// (Content-Length + LimitReader bound) and for input_audio inline size checks.
+func (s *ReplaceMediaURLsStep) downloadSizeFor(modality string) int64 {
+	if v, ok := s.maxDownloadSizeByMod[modality]; ok {
+		return v
+	}
+	return s.maxDownloadSize
+}
+
+// perModalityDownloadSizeParams names the config keys that override
+// max_download_size on a per-modality basis. Ordering matches Modality*.
+var perModalityDownloadSizeParams = map[string]string{
+	ModalityImage: "max_image_download_size",
+	ModalityAudio: "max_audio_download_size",
+	ModalityVideo: "max_video_download_size",
+}
+
+// parsePerModalityDownloadSizes reads the three optional per-modality cap
+// params. Each uses the same validation as max_download_size (positive,
+// bounded by MaxInt/BytesPerMB). Returns nil when no override is set so the
+// step can distinguish "no override" from "override set to zero".
+func parsePerModalityDownloadSizes(params map[string]any) (map[string]int64, error) {
+	var out map[string]int64
+	for mod, key := range perModalityDownloadSizeParams {
+		v, ok, err := paramInt(params, key)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		if v <= 0 || v > (math.MaxInt-1)/config.BytesPerMB {
+			return nil, fmt.Errorf("%s must be positive and at most %d MB, got %d", key, (math.MaxInt-1)/config.BytesPerMB, v)
+		}
+		if out == nil {
+			out = make(map[string]int64, len(perModalityDownloadSizeParams))
+		}
+		out[mod] = int64(v) * config.BytesPerMB
+	}
+	return out, nil
+}
+
+// perModalityContentTypeParams names the config keys that override the
+// built-in MIME allowlist on a per-modality basis.
+var perModalityContentTypeParams = map[string]string{
+	ModalityImage: "allowed_image_content_types",
+	ModalityAudio: "allowed_audio_content_types",
+	ModalityVideo: "allowed_video_content_types",
+}
+
+// parsePerModalityContentTypes builds the final per-modality allowlist map,
+// starting from defaultAllowedContentTypesByModality and replacing any
+// modality whose config param is set. Each override is a list of MIME
+// strings; non-list roots or non-string entries are rejected so a
+// misconfiguration fails loudly instead of silently disabling the check.
+func parsePerModalityContentTypes(params map[string]any) (map[string]map[string]struct{}, error) {
+	out := make(map[string]map[string]struct{}, len(defaultAllowedContentTypesByModality))
+	for mod, set := range defaultAllowedContentTypesByModality {
+		out[mod] = set
+	}
+	for mod, key := range perModalityContentTypeParams {
+		raw, present := params[key]
+		if !present || raw == nil {
+			continue
+		}
+		types, err := parseContentTypeSet(raw, key)
+		if err != nil {
+			return nil, err
+		}
+		out[mod] = types
+	}
+	return out, nil
+}
+
+// parseContentTypeSet accepts a list of MIME strings as either []any (YAML
+// decode path) or []string (programmatic callers), returning them as a set
+// keyed by lowercase MIME. fieldName is used only for error messages.
+func parseContentTypeSet(raw any, fieldName string) (map[string]struct{}, error) {
+	var entries []any
+	switch v := raw.(type) {
+	case []any:
+		entries = v
+	case []string:
+		entries = make([]any, len(v))
+		for i, s := range v {
+			entries[i] = s
+		}
+	default:
+		return nil, fmt.Errorf("%s must be a list of strings, got %T", fieldName, raw)
+	}
+	set := make(map[string]struct{}, len(entries))
+	for _, e := range entries {
+		mime, ok := e.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s entries must be strings, got %T", fieldName, e)
+		}
+		set[strings.ToLower(strings.TrimSpace(mime))] = struct{}{}
+	}
+	return set, nil
 }
 
 // audioFormatMIME maps OpenAI's input_audio.format values to canonical MIME
