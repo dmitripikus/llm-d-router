@@ -199,6 +199,8 @@ func (s *EncodeStep) buildEncodeTokenIDs(fullTokenIDs []int, entry pipeline.Mult
 }
 
 func (s *EncodeStep) buildEncodeBody(reqCtx *pipeline.RequestContext, tokenIDs []int, entry pipeline.MultimodalEntry, format gateway.RequestFormat, imageParts []map[string]any) map[string]any {
+	mod := entryModality(entry)
+	placeholder := map[string]any{"offset": 1, "length": entry.Placeholder.Length}
 	switch format {
 	case gateway.FormatChatCompletions:
 		imageContent := buildSingleImageContent(imageParts, entry.Index)
@@ -213,8 +215,8 @@ func (s *EncodeStep) buildEncodeBody(reqCtx *pipeline.RequestContext, tokenIDs [
 			"tokens": map[string]any{
 				"token_ids": tokenIDs,
 				"features": map[string]any{
-					"mm_hashes":       map[string][]string{ModalityImage: {entry.Hash}},
-					"mm_placeholders": map[string][]any{ModalityImage: {map[string]any{"offset": 1, "length": entry.Placeholder.Length}}},
+					"mm_hashes":       map[string][]string{mod: {entry.Hash}},
+					"mm_placeholders": map[string][]any{mod: {placeholder}},
 				},
 			},
 		}
@@ -225,9 +227,9 @@ func (s *EncodeStep) buildEncodeBody(reqCtx *pipeline.RequestContext, tokenIDs [
 			"model":     reqCtx.Model,
 			"token_ids": tokenIDs,
 			"features": map[string]any{
-				"mm_hashes":       map[string][]string{ModalityImage: {entry.Hash}},
-				"mm_placeholders": map[string][]any{ModalityImage: {map[string]any{"offset": 1, "length": entry.Placeholder.Length}}},
-				"kwargs_data":     mmKwargsField([]string{entry.KwargsData}),
+				"mm_hashes":       map[string][]string{mod: {entry.Hash}},
+				"mm_placeholders": map[string][]any{mod: {placeholder}},
+				"kwargs_data":     singleEntryKwargs(mod, entry.KwargsData),
 			},
 		}
 		capSingleTokenOutput(body, format)

@@ -382,14 +382,15 @@ func TestExtractMultimodalEntries(t *testing.T) {
 		}
 	})
 
-	t.Run("mm_hashes_no_image_modality_returns_nil", func(t *testing.T) {
+	t.Run("mm_hashes_non_image_modality_requires_placeholders", func(t *testing.T) {
+		// Since Section 3 the extractor walks every modality present in
+		// mm_hashes rather than only [image]. A response carrying audio
+		// hashes therefore must supply matching placeholders — a
+		// missing-placeholders response now fails loudly.
 		features := map[string]any{"mm_hashes": map[string]any{"audio": []any{testHash}}}
-		entries, err := extractMultimodalEntries(features)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if entries != nil {
-			t.Fatalf("expected nil, got %v", entries)
+		_, err := extractMultimodalEntries(features)
+		if !errors.Is(err, pipeline.ErrBadRequest) {
+			t.Errorf("expected ErrBadRequest for audio hashes without placeholders, got %v", err)
 		}
 	})
 
@@ -615,4 +616,114 @@ func TestBuildMMFeatures_CacheHitSentinelSerializesAsNull(t *testing.T) {
 			t.Errorf("expected kwargs_data absent when includeKwargs is false")
 		}
 	})
+}
+
+// TestBuildMMFeatures_GroupsByModality feeds entries with mixed Modality
+// values and asserts the output maps carry one key per distinct modality.
+// This locks in the Section 3 refactor invariant: buildMMFeatures produces
+// per-modality-keyed maps rather than the pre-refactor single-key [image]
+// output. Today production only creates image entries, but the shape must
+// already support audio and video so a future H1-gated widening drops in
+// without further changes here.
+func TestBuildMMFeatures_GroupsByModality(t *testing.T) {
+	entries := []pipeline.MultimodalEntry{
+		{Index: 0, Modality: ModalityImage, Hash: "img-a", KwargsData: "k-img-a",
+			Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 2}},
+		{Index: 1, Modality: ModalityAudio, Hash: "aud-a", KwargsData: "k-aud-a",
+			Placeholder: pipeline.PlaceholderRange{Offset: 4, Length: 3}},
+		{Index: 2, Modality: ModalityImage, Hash: "img-b", KwargsData: "",
+			Placeholder: pipeline.PlaceholderRange{Offset: 8, Length: 1}},
+		{Index: 3, Modality: ModalityVideo, Hash: "vid-a", KwargsData: "k-vid-a",
+			Placeholder: pipeline.PlaceholderRange{Offset: 10, Length: 5}},
+	}
+	features := buildMMFeatures(entries, true)
+
+	hashes, ok := features["mm_hashes"].(map[string][]string)
+	if !ok {
+		t.Fatalf("mm_hashes must be map[string][]string, got %T", features["mm_hashes"])
+	}
+	if got, want := hashes[ModalityImage], []string{"img-a", "img-b"}; !equalStringSlices(got, want) {
+		t.Errorf("mm_hashes[image] = %v, want %v", got, want)
+	}
+	if got, want := hashes[ModalityAudio], []string{"aud-a"}; !equalStringSlices(got, want) {
+		t.Errorf("mm_hashes[audio] = %v, want %v", got, want)
+	}
+	if got, want := hashes[ModalityVideo], []string{"vid-a"}; !equalStringSlices(got, want) {
+		t.Errorf("mm_hashes[video] = %v, want %v", got, want)
+	}
+
+	// kwargs_data preserves the cache-hit-sentinel (empty → nil) per-modality.
+	kwargs, ok := features["kwargs_data"].(map[string][]any)
+	if !ok {
+		t.Fatalf("kwargs_data must be map[string][]any, got %T", features["kwargs_data"])
+	}
+	imgKwargs := kwargs[ModalityImage]
+	if len(imgKwargs) != 2 || imgKwargs[0] != "k-img-a" || imgKwargs[1] != nil {
+		t.Errorf("kwargs_data[image] = %v, want [k-img-a, nil]", imgKwargs)
+	}
+}
+
+// TestExtractMultimodalEntries_MultiModalityResponse feeds a synthetic
+// response carrying both image and audio feature slices and asserts entries
+// come back tagged with the right modality and in a deterministic order
+// (sorted by modality key). Locks in the multi-modality walker added in
+// Section 3.
+func TestExtractMultimodalEntries_MultiModalityResponse(t *testing.T) {
+	features := map[string]any{
+		"mm_hashes": map[string]any{
+			ModalityImage: []any{"img-a", "img-b"},
+			ModalityAudio: []any{"aud-a"},
+		},
+		"mm_placeholders": map[string]any{
+			ModalityImage: []any{
+				map[string]any{"offset": float64(1), "length": float64(2)},
+				map[string]any{"offset": float64(4), "length": float64(2)},
+			},
+			ModalityAudio: []any{
+				map[string]any{"offset": float64(7), "length": float64(5)},
+			},
+		},
+		"kwargs_data": map[string]any{
+			ModalityImage: []any{"k-img-a", "k-img-b"},
+			ModalityAudio: []any{"k-aud-a"},
+		},
+	}
+	entries, err := extractMultimodalEntries(features)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries (2 image + 1 audio), got %d", len(entries))
+	}
+	// Modalities sorted alphabetically → audio before image.
+	if entries[0].Modality != ModalityAudio {
+		t.Errorf("entries[0].Modality = %q, want %q", entries[0].Modality, ModalityAudio)
+	}
+	if entries[0].Hash != "aud-a" {
+		t.Errorf("entries[0].Hash = %q, want aud-a", entries[0].Hash)
+	}
+	if entries[1].Modality != ModalityImage || entries[1].Hash != "img-a" {
+		t.Errorf("entries[1] = (%q, %q), want (image, img-a)", entries[1].Modality, entries[1].Hash)
+	}
+	if entries[2].Modality != ModalityImage || entries[2].Hash != "img-b" {
+		t.Errorf("entries[2] = (%q, %q), want (image, img-b)", entries[2].Modality, entries[2].Hash)
+	}
+	// Index is the flat position, not per-modality.
+	for i, e := range entries {
+		if e.Index != i {
+			t.Errorf("entries[%d].Index = %d, want %d", i, e.Index, i)
+		}
+	}
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
