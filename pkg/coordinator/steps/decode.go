@@ -137,24 +137,21 @@ func (s *DecodeStep) injectTokensField(reqCtx *pipeline.RequestContext) {
 // injectUUIDs tags each media content part with the uuid the decode
 // backend uses for prefix-cache keying. Each part is paired with the
 // MultimodalEntry that shares its modality and local index — the same
-// invariant the encode fanout uses (see localIndexOf in utils.go).
-// Non-media parts (text, tool_use, unknown types) are skipped.
+// invariant the encode fanout uses. Non-media parts (text, tool_use,
+// unknown types) are skipped.
 func (s *DecodeStep) injectUUIDs(reqCtx *pipeline.RequestContext) {
 	messages, ok := reqCtx.Body["messages"].([]any)
 	if !ok {
 		return
 	}
 
-	// Build a (modality, localIndex) → Hash lookup once so per-part
-	// tagging stays O(1) even on requests with many media items.
-	hashByModLocalIdx := make(map[string]map[int]string)
-	for i, entry := range reqCtx.MultimodalEntries {
+	// Group hashes by modality, preserving entry order. Later, the walker
+	// indexes into hashesByMod[modality] at the per-modality position for
+	// O(1) lookup per part. Build is O(n).
+	hashesByMod := make(map[string][]string)
+	for _, entry := range reqCtx.MultimodalEntries {
 		mod := entryModality(entry)
-		localIdx := localIndexOf(reqCtx.MultimodalEntries, i)
-		if _, ok := hashByModLocalIdx[mod]; !ok {
-			hashByModLocalIdx[mod] = make(map[int]string)
-		}
-		hashByModLocalIdx[mod][localIdx] = entry.Hash
+		hashesByMod[mod] = append(hashesByMod[mod], entry.Hash)
 	}
 
 	// Walk parts, incrementing a per-modality counter so each media part
@@ -187,8 +184,8 @@ func (s *DecodeStep) injectUUIDs(reqCtx *pipeline.RequestContext) {
 			}
 			localIdx := modCounter[modality]
 			modCounter[modality]++
-			if h, ok := hashByModLocalIdx[modality][localIdx]; ok {
-				partMap["uuid"] = h
+			if hashes := hashesByMod[modality]; localIdx < len(hashes) {
+				partMap["uuid"] = hashes[localIdx]
 			}
 		}
 	}

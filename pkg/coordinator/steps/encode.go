@@ -111,8 +111,13 @@ func (s *EncodeStep) Execute(ctx context.Context, reqCtx *pipeline.RequestContex
 		partsByMod = collectMediaParts(reqCtx.Body)
 	}
 
+	// Per-modality running counter: entry i's local index is the number of
+	// earlier entries sharing its modality. One pass, O(n) total.
+	modCounter := make(map[string]int)
 	for i, entry := range reqCtx.MultimodalEntries {
-		localIdx := localIndexOf(reqCtx.MultimodalEntries, i)
+		mod := entryModality(entry)
+		localIdx := modCounter[mod]
+		modCounter[mod]++
 		g.Go(func() error {
 			tokenIDs := s.buildEncodeTokenIDs(reqCtx.TokenIDs, entry)
 
@@ -241,7 +246,7 @@ func (s *EncodeStep) buildEncodeBody(reqCtx *pipeline.RequestContext, tokenIDs [
 // collectMediaParts walks the request messages once and returns the media
 // parts grouped by modality, each per-modality list in walker (request)
 // order. The encode fanout looks up the content part for an entry by
-// (entry.Modality, localIndexOf(entries, i)) — reading from the per-modality
+// (entry.Modality, per-modality position) — reading from the per-modality
 // list at the per-modality position. Non-media parts (text, tool_use, etc.)
 // are skipped. Parts that fail mediaPartIsWellFormed are also skipped so
 // this walker's per-modality indexing stays in lock-step with the

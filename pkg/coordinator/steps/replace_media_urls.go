@@ -334,6 +334,12 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 	}
 
 	for _, r := range results {
+		// r.ref.urlMap is set on every result the download loop assigns.
+		// Skip a zero-valued slot defensively so a future path that leaves
+		// results[i] unset after g.Wait cannot panic on a nil-map write.
+		if r.ref.urlMap == nil {
+			continue
+		}
 		if !strings.HasPrefix(r.ref.url, "data:") {
 			r.ref.urlMap["url"] = fmt.Sprintf("data:%s;base64,%s", r.contentType, r.base64Data)
 		}
