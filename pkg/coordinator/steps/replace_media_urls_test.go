@@ -1424,6 +1424,37 @@ func TestReplaceMediaURLsStep_InputAudio_UnknownFormat(t *testing.T) {
 	}
 }
 
+// TestReplaceMediaURLsStep_InputAudio_ExactlyAtCap encodes exactly cap bytes
+// and asserts the step accepts the payload. The base64 length of cap bytes
+// equals the size-check bound; a strictly-greater comparison must not
+// reject the boundary.
+func TestReplaceMediaURLsStep_InputAudio_ExactlyAtCap(t *testing.T) {
+	const capMB = 1
+	step, _ := NewReplaceMediaURLsStep(nil, map[string]any{"max_download_size": capMB})
+	payload := base64.StdEncoding.EncodeToString(make([]byte, capMB*1024*1024))
+	reqCtx := &pipeline.RequestContext{
+		Body: map[string]any{
+			"messages": []any{
+				map[string]any{
+					"role": "user",
+					"content": []any{
+						map[string]any{
+							"type":        "input_audio",
+							"input_audio": map[string]any{"data": payload, "format": "wav"},
+						},
+					},
+				},
+			},
+		},
+	}
+	if err := step.Execute(context.Background(), reqCtx); err != nil {
+		t.Fatalf("expected exactly-at-cap payload to be accepted, got %v", err)
+	}
+	if got := len(reqCtx.MultimodalEntries); got != 1 {
+		t.Fatalf("expected 1 entry, got %d", got)
+	}
+}
+
 // TestReplaceMediaURLsStep_InputAudio_OversizedPayload builds an input_audio
 // item whose base64 payload alone exceeds 4/3 * max_download_size and asserts
 // the step rejects it without attempting to decode.

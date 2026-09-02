@@ -352,11 +352,12 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 			return fmt.Errorf("input_audio content type %q not allowed at message %d part %d: %w",
 				contentType, ref.msgIdx, ref.partIdx, pipeline.ErrBadRequest)
 		}
-		// Base64 length upper-bounds decoded byte count at (3n+2)/4. Reject
-		// before decoding when the string alone already exceeds the cap.
-		// input_audio size is bounded by the audio-modality cap.
+		// Padded base64 for n bytes has length 4 * ceil(n/3). Compute that
+		// cap and reject when the string alone exceeds it, so an oversized
+		// payload is caught before decoding. input_audio size is bounded
+		// by the audio-modality cap.
 		sizeCap := s.downloadSizeFor(ref.modality)
-		maxBase64Len := (sizeCap*4 + 2) / 3
+		maxBase64Len := 4 * ((sizeCap + 2) / 3)
 		if int64(len(ref.data)) > maxBase64Len {
 			return fmt.Errorf("input_audio at message %d part %d exceeds size limit: %w",
 				ref.msgIdx, ref.partIdx, pipeline.ErrBadRequest)
