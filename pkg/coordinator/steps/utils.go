@@ -153,6 +153,24 @@ func entryModality(entry pipeline.MultimodalEntry) string {
 	return entry.Modality
 }
 
+// localIndexOf returns the position of entries[i] within its modality —
+// how many earlier entries in the slice share the same Modality. Encode
+// fanout uses this to look up the corresponding content part in the
+// per-modality parts map; decode.injectUUIDs uses the same convention to
+// pair a media part with its entry's Hash. O(n) per call, O(n²) across the
+// full fanout; negligible for realistic media counts and avoids adding a
+// struct field that every test fixture would need to set.
+func localIndexOf(entries []pipeline.MultimodalEntry, i int) int {
+	target := entryModality(entries[i])
+	n := 0
+	for j := 0; j < i; j++ {
+		if entryModality(entries[j]) == target {
+			n++
+		}
+	}
+	return n
+}
+
 // kwargsSentinel implements the JSON-null "resolve from cache" convention for
 // a single kwargs_data slot. The empty string is our internal "resolve from
 // cache" sentinel and MUST serialize as JSON null, not "": vLLM treats null

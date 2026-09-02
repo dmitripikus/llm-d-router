@@ -134,13 +134,32 @@ func (s *DecodeStep) injectTokensField(reqCtx *pipeline.RequestContext) {
 	reqCtx.Body["tokens"] = tokens
 }
 
+// injectUUIDs tags each media content part with the uuid the decode
+// backend uses for prefix-cache keying. Each part is paired with the
+// MultimodalEntry that shares its modality and local index — the same
+// invariant the encode fanout uses (see localIndexOf in utils.go).
+// Non-media parts (text, tool_use, unknown types) are skipped.
 func (s *DecodeStep) injectUUIDs(reqCtx *pipeline.RequestContext) {
 	messages, ok := reqCtx.Body["messages"].([]any)
 	if !ok {
 		return
 	}
 
-	hashIdx := 0
+	// Build a (modality, localIndex) → Hash lookup once so per-part
+	// tagging stays O(1) even on requests with many media items.
+	hashByModLocalIdx := make(map[string]map[int]string)
+	for i, entry := range reqCtx.MultimodalEntries {
+		mod := entryModality(entry)
+		localIdx := localIndexOf(reqCtx.MultimodalEntries, i)
+		if _, ok := hashByModLocalIdx[mod]; !ok {
+			hashByModLocalIdx[mod] = make(map[int]string)
+		}
+		hashByModLocalIdx[mod][localIdx] = entry.Hash
+	}
+
+	// Walk parts, incrementing a per-modality counter so each media part
+	// gets the hash of the entry at the matching (modality, localIndex).
+	modCounter := make(map[string]int)
 	for _, msg := range messages {
 		msgMap, ok := msg.(map[string]any)
 		if !ok {
@@ -155,12 +174,15 @@ func (s *DecodeStep) injectUUIDs(reqCtx *pipeline.RequestContext) {
 			if !ok {
 				continue
 			}
-			if partMap["type"] != "image_url" {
+			partType, _ := partMap["type"].(string)
+			modality, isMedia := partTypeModality[partType]
+			if !isMedia {
 				continue
 			}
-			if hashIdx < len(reqCtx.MultimodalEntries) {
-				partMap["uuid"] = reqCtx.MultimodalEntries[hashIdx].Hash
-				hashIdx++
+			localIdx := modCounter[modality]
+			modCounter[modality]++
+			if h, ok := hashByModLocalIdx[modality][localIdx]; ok {
+				partMap["uuid"] = h
 			}
 		}
 	}

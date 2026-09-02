@@ -313,18 +313,17 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 		if !strings.HasPrefix(r.ref.url, "data:") {
 			r.ref.urlMap["url"] = fmt.Sprintf("data:%s;base64,%s", r.contentType, r.base64Data)
 		}
-		// Only image entries feed into MultimodalEntries today. Audio and
-		// video get validated and inlined but do not travel to the encoder
-		// fanout — the encoder wire contract for those modalities is not
-		// yet defined (see coordinator-audio-video-plan.md H1).
-		if r.ref.modality == ModalityImage {
-			appendMultimodalEntry(reqCtx, r.contentType, r.base64Data)
-		}
+		// All modalities feed into MultimodalEntries: the encode step's
+		// fanout iterates entries and produces per-modality sub-requests.
+		// See coordinator-audio-video-plan.md for the H1 wire-contract
+		// assumption this pins.
+		appendMultimodalEntry(reqCtx, r.ref.modality, r.contentType, r.base64Data)
 	}
 
 	// input_audio parts carry inline base64 already; no download needed,
 	// but MIME and size must still be validated so a caller cannot smuggle
-	// text or oversized payloads through the audio slot.
+	// text or oversized payloads through the audio slot. Validated items
+	// enter MultimodalEntries the same way downloaded audio does.
 	for _, ref := range inlineRefs {
 		contentType, err := audioFormatToMIME(ref.format)
 		if err != nil {
@@ -346,15 +345,16 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 		}
 		// Body passes through unmodified: the "data" field already carries
 		// the base64 payload the backend needs.
+		appendMultimodalEntry(reqCtx, ref.modality, contentType, ref.data)
 	}
 
 	return nil
 }
 
-func appendMultimodalEntry(reqCtx *pipeline.RequestContext, contentType, b64 string) {
+func appendMultimodalEntry(reqCtx *pipeline.RequestContext, modality, contentType, b64 string) {
 	reqCtx.MultimodalEntries = append(reqCtx.MultimodalEntries, pipeline.MultimodalEntry{
 		Index:       len(reqCtx.MultimodalEntries),
-		Modality:    ModalityImage,
+		Modality:    modality,
 		Base64Data:  b64,
 		ContentType: contentType,
 	})

@@ -107,8 +107,9 @@ pipeline:
     # replace-media-urls: first step. Downloads http(s) URLs from image_url,
     # audio_url, and video_url content parts (base64-inlining them as data:
     # URIs), validates input_audio inline items, and seeds MultimodalEntries
-    # for image parts. Audio and video are validated + inlined but do not
-    # enter MultimodalEntries in this release.
+    # for every recognized media part. All modalities feed into the encode
+    # step's fanout — the encoder pod must accept audio/video content-part
+    # types (see H1 in coordinator-audio-video-plan.md).
     # -------------------------------------------------------------------
     - type: replace-media-urls
       params:
@@ -139,12 +140,17 @@ pipeline:
 
         # max_audio_download_size overrides max_download_size for audio_url
         # items and for input_audio inline payloads (checked against the
-        # decoded byte count implied by the base64 length).
+        # decoded byte count implied by the base64 length). Audio codec
+        # decoders historically carry more CVEs than image decoders; keep
+        # this cap tight until your security team has reviewed the audio
+        # decode path end-to-end (H2 in coordinator-audio-video-plan.md).
         # max_audio_download_size: 60
 
         # max_video_download_size overrides max_download_size for video_url
         # items. Videos routinely need 100+ MB per clip; leave commented out
-        # only if your deployment truly does not accept video.
+        # only if your deployment truly does not accept video. Same codec
+        # CVE caveat as audio applies — treat pending security review as a
+        # gate on raising this in production.
         # max_video_download_size: 200
 
         # allowed_image_content_types overrides the built-in image MIME

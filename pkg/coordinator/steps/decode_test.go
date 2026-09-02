@@ -446,3 +446,79 @@ func TestDecodeStep_TransportError(t *testing.T) {
 		t.Fatalf("expected ErrorHandler-written 502, got %d", result.StatusCode)
 	}
 }
+
+// ---- Section 5: injectUUIDs widened to audio/video --------------------------
+
+// TestInjectUUIDs_TagsAllMediaParts asserts every recognized media
+// content-part type receives a uuid tag matching its (modality, local index)
+// entry in MultimodalEntries. Non-media parts (text, unknown types) are
+// left alone.
+func TestInjectUUIDs_TagsAllMediaParts(t *testing.T) {
+	step := &DecodeStep{}
+	imagePart := map[string]any{"type": "image_url", "image_url": map[string]any{"url": "u-img"}}
+	audioURLPart := map[string]any{"type": "audio_url", "audio_url": map[string]any{"url": "u-aud"}}
+	inputAudioPart := map[string]any{"type": "input_audio", "input_audio": map[string]any{"data": "d", "format": "wav"}}
+	videoPart := map[string]any{"type": "video_url", "video_url": map[string]any{"url": "u-vid"}}
+	textPart := map[string]any{"type": "text", "text": "hi"}
+
+	reqCtx := &pipeline.RequestContext{
+		Body: map[string]any{
+			"messages": []any{
+				map[string]any{
+					"role":    "user",
+					"content": []any{textPart, imagePart, audioURLPart, videoPart, inputAudioPart},
+				},
+			},
+		},
+		MultimodalEntries: []pipeline.MultimodalEntry{
+			{Index: 0, Modality: ModalityImage, Hash: "H-img"},
+			{Index: 1, Modality: ModalityAudio, Hash: "H-aud-url"},
+			{Index: 2, Modality: ModalityVideo, Hash: "H-vid"},
+			{Index: 3, Modality: ModalityAudio, Hash: "H-input-audio"},
+		},
+	}
+	step.injectUUIDs(reqCtx)
+
+	if got := imagePart["uuid"]; got != "H-img" {
+		t.Errorf("image uuid = %v, want H-img", got)
+	}
+	if got := audioURLPart["uuid"]; got != "H-aud-url" {
+		t.Errorf("audio_url uuid = %v, want H-aud-url", got)
+	}
+	if got := inputAudioPart["uuid"]; got != "H-input-audio" {
+		t.Errorf("input_audio uuid = %v, want H-input-audio", got)
+	}
+	if got := videoPart["uuid"]; got != "H-vid" {
+		t.Errorf("video uuid = %v, want H-vid", got)
+	}
+	if _, ok := textPart["uuid"]; ok {
+		t.Errorf("text part must not be tagged: %+v", textPart)
+	}
+}
+
+// TestInjectUUIDs_TagsRepeatedModalityInOrder asserts that two audio parts
+// in the same request receive the hashes of the two audio entries, in
+// walker order.
+func TestInjectUUIDs_TagsRepeatedModalityInOrder(t *testing.T) {
+	step := &DecodeStep{}
+	aud0 := map[string]any{"type": "audio_url", "audio_url": map[string]any{"url": "u0"}}
+	aud1 := map[string]any{"type": "audio_url", "audio_url": map[string]any{"url": "u1"}}
+	reqCtx := &pipeline.RequestContext{
+		Body: map[string]any{
+			"messages": []any{
+				map[string]any{"role": "user", "content": []any{aud0, aud1}},
+			},
+		},
+		MultimodalEntries: []pipeline.MultimodalEntry{
+			{Index: 0, Modality: ModalityAudio, Hash: "H0"},
+			{Index: 1, Modality: ModalityAudio, Hash: "H1"},
+		},
+	}
+	step.injectUUIDs(reqCtx)
+	if got := aud0["uuid"]; got != "H0" {
+		t.Errorf("audio[0] uuid = %v, want H0", got)
+	}
+	if got := aud1["uuid"]; got != "H1" {
+		t.Errorf("audio[1] uuid = %v, want H1", got)
+	}
+}

@@ -1171,8 +1171,14 @@ func TestReplaceMediaURLsStep_AudioURL_Downloads(t *testing.T) {
 	if err := step.Execute(context.Background(), reqCtx); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(reqCtx.MultimodalEntries) != 0 {
-		t.Fatalf("audio must not enter MultimodalEntries yet, got %d entries", len(reqCtx.MultimodalEntries))
+	if len(reqCtx.MultimodalEntries) != 1 {
+		t.Fatalf("expected 1 audio entry in MultimodalEntries, got %d", len(reqCtx.MultimodalEntries))
+	}
+	if reqCtx.MultimodalEntries[0].Modality != ModalityAudio {
+		t.Fatalf("expected Modality=%q, got %q", ModalityAudio, reqCtx.MultimodalEntries[0].Modality)
+	}
+	if reqCtx.MultimodalEntries[0].ContentType != "audio/wav" {
+		t.Fatalf("expected content type audio/wav, got %s", reqCtx.MultimodalEntries[0].ContentType)
 	}
 	msgs := reqCtx.Body["messages"].([]any)
 	inner := msgs[0].(map[string]any)["content"].([]any)[0].(map[string]any)["audio_url"].(map[string]any)
@@ -1211,8 +1217,11 @@ func TestReplaceMediaURLsStep_VideoURL_Downloads(t *testing.T) {
 	if err := step.Execute(context.Background(), reqCtx); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(reqCtx.MultimodalEntries) != 0 {
-		t.Fatalf("video must not enter MultimodalEntries yet, got %d entries", len(reqCtx.MultimodalEntries))
+	if len(reqCtx.MultimodalEntries) != 1 {
+		t.Fatalf("expected 1 video entry in MultimodalEntries, got %d", len(reqCtx.MultimodalEntries))
+	}
+	if reqCtx.MultimodalEntries[0].Modality != ModalityVideo {
+		t.Fatalf("expected Modality=%q, got %q", ModalityVideo, reqCtx.MultimodalEntries[0].Modality)
 	}
 	msgs := reqCtx.Body["messages"].([]any)
 	inner := msgs[0].(map[string]any)["content"].([]any)[0].(map[string]any)["video_url"].(map[string]any)
@@ -1245,8 +1254,11 @@ func TestReplaceMediaURLsStep_AudioDataURI(t *testing.T) {
 	if err := step.Execute(context.Background(), reqCtx); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(reqCtx.MultimodalEntries) != 0 {
-		t.Fatalf("audio must not enter MultimodalEntries yet, got %d entries", len(reqCtx.MultimodalEntries))
+	if len(reqCtx.MultimodalEntries) != 1 {
+		t.Fatalf("expected 1 audio entry in MultimodalEntries, got %d", len(reqCtx.MultimodalEntries))
+	}
+	if reqCtx.MultimodalEntries[0].Modality != ModalityAudio {
+		t.Fatalf("expected Modality=%q, got %q", ModalityAudio, reqCtx.MultimodalEntries[0].Modality)
 	}
 	msgs := reqCtx.Body["messages"].([]any)
 	inner := msgs[0].(map[string]any)["content"].([]any)[0].(map[string]any)["audio_url"].(map[string]any)
@@ -1277,8 +1289,11 @@ func TestReplaceMediaURLsStep_VideoDataURI(t *testing.T) {
 	if err := step.Execute(context.Background(), reqCtx); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(reqCtx.MultimodalEntries) != 0 {
-		t.Fatalf("video must not enter MultimodalEntries yet, got %d entries", len(reqCtx.MultimodalEntries))
+	if len(reqCtx.MultimodalEntries) != 1 {
+		t.Fatalf("expected 1 video entry in MultimodalEntries, got %d", len(reqCtx.MultimodalEntries))
+	}
+	if reqCtx.MultimodalEntries[0].Modality != ModalityVideo {
+		t.Fatalf("expected Modality=%q, got %q", ModalityVideo, reqCtx.MultimodalEntries[0].Modality)
 	}
 }
 
@@ -1305,8 +1320,18 @@ func TestReplaceMediaURLsStep_InputAudio_Valid(t *testing.T) {
 	if err := step.Execute(context.Background(), reqCtx); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(reqCtx.MultimodalEntries) != 0 {
-		t.Fatalf("input_audio must not enter MultimodalEntries yet, got %d entries", len(reqCtx.MultimodalEntries))
+	if len(reqCtx.MultimodalEntries) != 1 {
+		t.Fatalf("expected 1 audio entry in MultimodalEntries, got %d", len(reqCtx.MultimodalEntries))
+	}
+	entry := reqCtx.MultimodalEntries[0]
+	if entry.Modality != ModalityAudio {
+		t.Fatalf("expected Modality=%q, got %q", ModalityAudio, entry.Modality)
+	}
+	if entry.ContentType != "audio/wav" {
+		t.Fatalf("expected content type audio/wav, got %s", entry.ContentType)
+	}
+	if entry.Base64Data != "UklGRg==" {
+		t.Fatalf("expected Base64Data == payload, got %q", entry.Base64Data)
 	}
 	msgs := reqCtx.Body["messages"].([]any)
 	inner := msgs[0].(map[string]any)["content"].([]any)[0].(map[string]any)["input_audio"].(map[string]any)
@@ -1475,11 +1500,17 @@ func TestReplaceMediaURLsStep_MixedImageAudioVideo(t *testing.T) {
 	if err := step.Execute(context.Background(), reqCtx); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(reqCtx.MultimodalEntries) != 1 {
-		t.Fatalf("expected exactly 1 image entry, got %d", len(reqCtx.MultimodalEntries))
+	// Section 5: all three media parts feed into MultimodalEntries.
+	// Entries appear in walker order: URL refs first (image, audio, video),
+	// then any inline refs (none here).
+	if len(reqCtx.MultimodalEntries) != 3 {
+		t.Fatalf("expected 3 entries (1 image + 1 audio + 1 video), got %d", len(reqCtx.MultimodalEntries))
 	}
-	if got := reqCtx.MultimodalEntries[0].Modality; got != ModalityImage {
-		t.Fatalf("expected Modality=%q, got %q", ModalityImage, got)
+	wantModalities := []string{ModalityImage, ModalityAudio, ModalityVideo}
+	for i, want := range wantModalities {
+		if got := reqCtx.MultimodalEntries[i].Modality; got != want {
+			t.Errorf("MultimodalEntries[%d].Modality = %q, want %q", i, got, want)
+		}
 	}
 	// Verify audio and video URLs were rewritten in place.
 	content := reqCtx.Body["messages"].([]any)[0].(map[string]any)["content"].([]any)
