@@ -243,8 +243,12 @@ func (s *EncodeStep) buildEncodeBody(reqCtx *pipeline.RequestContext, tokenIDs [
 // order. The encode fanout looks up the content part for an entry by
 // (entry.Modality, localIndexOf(entries, i)) — reading from the per-modality
 // list at the per-modality position. Non-media parts (text, tool_use, etc.)
-// are skipped. Uses partTypeModality from replace_media_urls.go as the
-// authoritative list of recognized media part types.
+// are skipped. Parts that fail mediaPartIsWellFormed are also skipped so
+// this walker's per-modality indexing stays in lock-step with the
+// MultimodalEntries replace_media_urls produced: any part it silently
+// dropped must not shift the pairing here. Uses partTypeModality from
+// replace_media_urls.go as the authoritative list of recognized media part
+// types.
 func collectMediaParts(body map[string]any) map[string][]map[string]any {
 	messages, _ := body["messages"].([]any)
 	partsByMod := make(map[string][]map[string]any)
@@ -265,6 +269,9 @@ func collectMediaParts(body map[string]any) map[string][]map[string]any {
 			partType, _ := partMap["type"].(string)
 			modality, isMedia := partTypeModality[partType]
 			if !isMedia {
+				continue
+			}
+			if !mediaPartIsWellFormed(partMap, partType) {
 				continue
 			}
 			partsByMod[modality] = append(partsByMod[modality], partMap)

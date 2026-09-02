@@ -179,6 +179,12 @@ func (s *DecodeStep) injectUUIDs(reqCtx *pipeline.RequestContext) {
 			if !isMedia {
 				continue
 			}
+			// Same predicate replace_media_urls uses; a malformed part
+			// it silently dropped must not shift the per-modality
+			// counter here or the wrong entry's Hash would be attached.
+			if !mediaPartIsWellFormed(partMap, partType) {
+				continue
+			}
 			localIdx := modCounter[modality]
 			modCounter[modality]++
 			if h, ok := hashByModLocalIdx[modality][localIdx]; ok {

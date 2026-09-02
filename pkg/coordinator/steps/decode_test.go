@@ -522,3 +522,45 @@ func TestInjectUUIDs_TagsRepeatedModalityInOrder(t *testing.T) {
 		t.Errorf("audio[1] uuid = %v, want H1", got)
 	}
 }
+
+// TestInjectUUIDs_SkipsMalformedParts asserts that content parts
+// replace_media_urls silently drops (missing/null inner map, non-string
+// url, empty input_audio data) also do not consume a slot here. The one
+// well-formed part of each modality must receive its entry's hash even
+// when a malformed part appears earlier in the same message.
+func TestInjectUUIDs_SkipsMalformedParts(t *testing.T) {
+	step := &DecodeStep{}
+	malformedImg := map[string]any{"type": "image_url", "image_url": map[string]any{"url": nil}}
+	goodImg := map[string]any{"type": "image_url", "image_url": map[string]any{"url": "u-img"}}
+	malformedInputAudio := map[string]any{"type": "input_audio", "input_audio": map[string]any{"data": "", "format": "wav"}}
+	goodInputAudio := map[string]any{"type": "input_audio", "input_audio": map[string]any{"data": "AA==", "format": "wav"}}
+
+	reqCtx := &pipeline.RequestContext{
+		Body: map[string]any{
+			"messages": []any{
+				map[string]any{
+					"role":    "user",
+					"content": []any{malformedImg, goodImg, malformedInputAudio, goodInputAudio},
+				},
+			},
+		},
+		MultimodalEntries: []pipeline.MultimodalEntry{
+			{Index: 0, Modality: ModalityImage, Hash: "H-img"},
+			{Index: 1, Modality: ModalityAudio, Hash: "H-aud"},
+		},
+	}
+	step.injectUUIDs(reqCtx)
+
+	if _, tagged := malformedImg["uuid"]; tagged {
+		t.Errorf("malformed image_url must not be tagged: %+v", malformedImg)
+	}
+	if got := goodImg["uuid"]; got != "H-img" {
+		t.Errorf("good image_url uuid = %v, want H-img", got)
+	}
+	if _, tagged := malformedInputAudio["uuid"]; tagged {
+		t.Errorf("malformed input_audio must not be tagged: %+v", malformedInputAudio)
+	}
+	if got := goodInputAudio["uuid"]; got != "H-aud" {
+		t.Errorf("good input_audio uuid = %v, want H-aud", got)
+	}
+}

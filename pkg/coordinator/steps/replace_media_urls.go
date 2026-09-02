@@ -65,6 +65,25 @@ var partTypeModality = map[string]string{
 	inputAudioPartType: ModalityAudio,
 }
 
+// mediaPartIsWellFormed reports whether partMap carries the fields
+// replace_media_urls needs to produce a MultimodalEntry for it. Downstream
+// steps that pair entries with parts (encode.collectMediaParts,
+// decode.injectUUIDs) must apply the same predicate so entry i pairs with
+// the i-th well-formed part of its modality; a silently-skipped part must
+// not shift the pairing.
+func mediaPartIsWellFormed(partMap map[string]any, partType string) bool {
+	inner, ok := partMap[partType].(map[string]any)
+	if !ok {
+		return false
+	}
+	if partType == inputAudioPartType {
+		data, _ := inner["data"].(string)
+		return data != ""
+	}
+	_, ok = inner["url"].(string)
+	return ok
+}
+
 const defaultContentType = "application/octet-stream"
 
 // defaultMaxDownloadSize is the default cap for max_download_size, in megabytes.

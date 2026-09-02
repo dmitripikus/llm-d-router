@@ -662,6 +662,55 @@ func TestCollectMediaParts_MixedModalities(t *testing.T) {
 	}
 }
 
+// TestCollectMediaParts_SkipsMalformedParts asserts that content parts
+// replace_media_urls silently skips (missing/null inner map, non-string
+// url, empty input_audio data) are also skipped here, so per-modality
+// indexing stays aligned with MultimodalEntries. Without this alignment,
+// a valid entry would pair with a malformed part in encode fanout.
+func TestCollectMediaParts_SkipsMalformedParts(t *testing.T) {
+	body := map[string]any{
+		"messages": []any{
+			map[string]any{
+				"role": "user",
+				"content": []any{
+					// malformed: inner map missing → replace_media_urls skips
+					map[string]any{"type": "image_url"},
+					// malformed: url is nil → replace_media_urls skips
+					map[string]any{"type": "image_url", "image_url": map[string]any{"url": nil}},
+					// well-formed
+					map[string]any{"type": "image_url", "image_url": map[string]any{"url": "u-good"}},
+					// malformed audio_url: url is a number
+					map[string]any{"type": "audio_url", "audio_url": map[string]any{"url": 42}},
+					// well-formed audio_url
+					map[string]any{"type": "audio_url", "audio_url": map[string]any{"url": "au-good"}},
+					// malformed input_audio: empty data
+					map[string]any{"type": "input_audio", "input_audio": map[string]any{"data": "", "format": "wav"}},
+					// malformed input_audio: no inner map
+					map[string]any{"type": "input_audio"},
+					// well-formed input_audio
+					map[string]any{"type": "input_audio", "input_audio": map[string]any{"data": "AA==", "format": "wav"}},
+				},
+			},
+		},
+	}
+	partsByMod := collectMediaParts(body)
+	if got := len(partsByMod[ModalityImage]); got != 1 {
+		t.Fatalf("image parts = %d, want 1 (malformed skipped)", got)
+	}
+	if got := len(partsByMod[ModalityAudio]); got != 2 {
+		t.Fatalf("audio parts = %d, want 2 (audio_url + input_audio, malformed skipped)", got)
+	}
+	if url, _ := partsByMod[ModalityImage][0]["image_url"].(map[string]any); url["url"] != "u-good" {
+		t.Errorf("image[0] = %+v, want the well-formed part", partsByMod[ModalityImage][0])
+	}
+	if url, _ := partsByMod[ModalityAudio][0]["audio_url"].(map[string]any); url["url"] != "au-good" {
+		t.Errorf("audio[0] = %+v, want the well-formed audio_url", partsByMod[ModalityAudio][0])
+	}
+	if data, _ := partsByMod[ModalityAudio][1]["input_audio"].(map[string]any); data["data"] != "AA==" {
+		t.Errorf("audio[1] = %+v, want the well-formed input_audio", partsByMod[ModalityAudio][1])
+	}
+}
+
 // TestBuildSingleMediaContent_PerModality asserts each modality's content
 // part is emitted in its native OpenAI shape.
 func TestBuildSingleMediaContent_PerModality(t *testing.T) {
