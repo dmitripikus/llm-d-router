@@ -1897,3 +1897,28 @@ func TestReplaceMediaURLsStep_RejectsNonListAllowedContentTypes(t *testing.T) {
 		t.Fatal("expected construction error for non-list allowlist value")
 	}
 }
+
+// TestParsePerModalityContentTypes_DoesNotAliasDefaults confirms that a
+// caller mutating the returned per-modality set cannot reach into the
+// package-level defaultAllowedContentTypesByModality: adding an entry to
+// the returned image set must not appear in a fresh call. This protects
+// every subsequent ReplaceMediaURLsStep from picking up leaked overrides.
+func TestParsePerModalityContentTypes_DoesNotAliasDefaults(t *testing.T) {
+	first, err := parsePerModalityContentTypes(nil)
+	if err != nil {
+		t.Fatalf("parsePerModalityContentTypes returned error: %v", err)
+	}
+	const poison = "application/x-poison"
+	first[ModalityImage][poison] = struct{}{}
+
+	second, err := parsePerModalityContentTypes(nil)
+	if err != nil {
+		t.Fatalf("parsePerModalityContentTypes returned error: %v", err)
+	}
+	if _, leaked := second[ModalityImage][poison]; leaked {
+		t.Fatal("mutation of first result reached defaults and leaked into second result")
+	}
+	if _, leaked := defaultAllowedContentTypesByModality[ModalityImage][poison]; leaked {
+		t.Fatal("mutation of first result reached package-level defaults")
+	}
+}

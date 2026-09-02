@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net"
 	"net/http"
@@ -564,7 +565,10 @@ var perModalityContentTypeParams = map[string]string{
 func parsePerModalityContentTypes(params map[string]any) (map[string]map[string]struct{}, error) {
 	out := make(map[string]map[string]struct{}, len(defaultAllowedContentTypesByModality))
 	for mod, set := range defaultAllowedContentTypesByModality {
-		out[mod] = set
+		// Clone so a caller mutating the returned per-modality set never
+		// leaks into defaultAllowedContentTypesByModality (visible to every
+		// future ReplaceMediaURLsStep in the process).
+		out[mod] = maps.Clone(set)
 	}
 	for mod, key := range perModalityContentTypeParams {
 		raw, present := params[key]
