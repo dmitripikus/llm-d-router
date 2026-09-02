@@ -622,7 +622,7 @@ func TestEncodeStep_GenerateFormat_CapsSingleToken(t *testing.T) {
 	}
 }
 
-// ---- Section 5: multimodal encoder fanout ----------------------------------
+// ---- multimodal encoder fanout ---------------------------------------------
 
 // TestCollectMediaParts_MixedModalities asserts the walker returns per-modality
 // lists of parts in walker order. Order within each modality is the original

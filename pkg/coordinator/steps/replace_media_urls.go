@@ -315,8 +315,7 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 		}
 		// All modalities feed into MultimodalEntries: the encode step's
 		// fanout iterates entries and produces per-modality sub-requests.
-		// See coordinator-audio-video-plan.md for the H1 wire-contract
-		// assumption this pins.
+		// The encoder pod must accept audio/video content-part types.
 		appendMultimodalEntry(reqCtx, r.ref.modality, r.contentType, r.base64Data)
 	}
 

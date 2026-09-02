@@ -112,9 +112,7 @@ func capSingleTokenOutput(body map[string]any, format gateway.RequestFormat) {
 // buildMMFeatures builds the multimodal features map (mm_hashes, mm_placeholders,
 // and optionally kwargs_data) from the request's multimodal entries. It returns
 // nil when there are no entries. Entries are grouped by Modality so a
-// mixed-modality request produces one key per modality in each feature map
-// (today MultimodalEntries is populated only for image, so the output is a
-// single-key map keyed by ModalityImage — identical to prior behaviour).
+// mixed-modality request produces one key per modality in each feature map.
 func buildMMFeatures(entries []pipeline.MultimodalEntry, includeKwargs bool) map[string]any {
 	if len(entries) == 0 {
 		return nil

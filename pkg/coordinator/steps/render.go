@@ -271,8 +271,6 @@ func (s *RenderStep) executeChatCompletions(ctx context.Context, reqCtx *pipelin
 	}
 
 	// Length check: sum of per-modality slice lengths must match len(entries).
-	// Today entries carry Modality=image and the response has only [image]
-	// keys, so this collapses to the single-key check that was here before.
 	totalHashes, totalPlaceholders, totalKwargs := 0, 0, 0
 	for _, s := range renderResp.Features.MMHashes {
 		totalHashes += len(s)
@@ -295,9 +293,9 @@ func (s *RenderStep) executeChatCompletions(ctx context.Context, reqCtx *pipelin
 	}
 
 	// Walk entries in order and pull their hash/placeholder/kwargs from the
-	// response using a per-modality position counter. For image-only entries
-	// against an image-only response, modIndex[image] counts 0, 1, 2… — same
-	// as the previous imageHashes[i] indexing.
+	// response using a per-modality position counter. For an image-only
+	// request against an image-only response, modIndex[image] counts 0, 1,
+	// 2… and each entry pairs with the response slot at that position.
 	modIndex := make(map[string]int)
 	for i := range reqCtx.MultimodalEntries {
 		mod := entryModality(reqCtx.MultimodalEntries[i])

@@ -383,10 +383,9 @@ func TestExtractMultimodalEntries(t *testing.T) {
 	})
 
 	t.Run("mm_hashes_non_image_modality_requires_placeholders", func(t *testing.T) {
-		// Since Section 3 the extractor walks every modality present in
-		// mm_hashes rather than only [image]. A response carrying audio
-		// hashes therefore must supply matching placeholders — a
-		// missing-placeholders response now fails loudly.
+		// The extractor walks every modality present in mm_hashes; a
+		// response carrying audio hashes must supply matching
+		// placeholders or the request is rejected.
 		features := map[string]any{"mm_hashes": map[string]any{"audio": []any{testHash}}}
 		_, err := extractMultimodalEntries(features)
 		if !errors.Is(err, pipeline.ErrBadRequest) {
@@ -619,12 +618,9 @@ func TestBuildMMFeatures_CacheHitSentinelSerializesAsNull(t *testing.T) {
 }
 
 // TestBuildMMFeatures_GroupsByModality feeds entries with mixed Modality
-// values and asserts the output maps carry one key per distinct modality.
-// This locks in the Section 3 refactor invariant: buildMMFeatures produces
-// per-modality-keyed maps rather than the pre-refactor single-key [image]
-// output. Today production only creates image entries, but the shape must
-// already support audio and video so a future H1-gated widening drops in
-// without further changes here.
+// values and asserts the output maps carry one key per distinct modality:
+// buildMMFeatures produces per-modality-keyed maps whose shape already
+// supports audio and video alongside image.
 func TestBuildMMFeatures_GroupsByModality(t *testing.T) {
 	entries := []pipeline.MultimodalEntry{
 		{Index: 0, Modality: ModalityImage, Hash: "img-a", KwargsData: "k-img-a",
@@ -666,8 +662,7 @@ func TestBuildMMFeatures_GroupsByModality(t *testing.T) {
 // TestExtractMultimodalEntries_MultiModalityResponse feeds a synthetic
 // response carrying both image and audio feature slices and asserts entries
 // come back tagged with the right modality and in a deterministic order
-// (sorted by modality key). Locks in the multi-modality walker added in
-// Section 3.
+// (sorted by modality key).
 func TestExtractMultimodalEntries_MultiModalityResponse(t *testing.T) {
 	features := map[string]any{
 		"mm_hashes": map[string]any{

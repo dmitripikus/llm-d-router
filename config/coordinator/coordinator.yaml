@@ -109,7 +109,7 @@ pipeline:
     # URIs), validates input_audio inline items, and seeds MultimodalEntries
     # for every recognized media part. All modalities feed into the encode
     # step's fanout — the encoder pod must accept audio/video content-part
-    # types (see H1 in coordinator-audio-video-plan.md).
+    # types.
     # -------------------------------------------------------------------
     - type: replace-media-urls
       params:
@@ -143,7 +143,7 @@ pipeline:
         # decoded byte count implied by the base64 length). Audio codec
         # decoders historically carry more CVEs than image decoders; keep
         # this cap tight until your security team has reviewed the audio
-        # decode path end-to-end (H2 in coordinator-audio-video-plan.md).
+        # decode path end-to-end.
         # max_audio_download_size: 60
 
         # max_video_download_size overrides max_download_size for video_url

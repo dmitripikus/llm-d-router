@@ -1138,7 +1138,7 @@ func TestReplaceMediaURLsStep_CancelledContextSkipsDataURIParse(t *testing.T) {
 	}
 }
 
-// ---- Audio / video ingestion (Section 2) -----------------------------------
+// ---- Audio / video ingestion -----------------------------------------------
 
 // TestReplaceMediaURLsStep_AudioURL_Downloads asserts that an audio_url is
 // fetched, size-capped, MIME-checked (against the audio allowlist for data
@@ -1500,9 +1500,9 @@ func TestReplaceMediaURLsStep_MixedImageAudioVideo(t *testing.T) {
 	if err := step.Execute(context.Background(), reqCtx); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Section 5: all three media parts feed into MultimodalEntries.
-	// Entries appear in walker order: URL refs first (image, audio, video),
-	// then any inline refs (none here).
+	// All three media parts feed into MultimodalEntries. Entries appear
+	// in walker order: URL refs first (image, audio, video), then any
+	// inline refs (none here).
 	if len(reqCtx.MultimodalEntries) != 3 {
 		t.Fatalf("expected 3 entries (1 image + 1 audio + 1 video), got %d", len(reqCtx.MultimodalEntries))
 	}
@@ -1552,11 +1552,11 @@ func TestReplaceMediaURLsStep_MaxEntriesCountsAllModalities(t *testing.T) {
 	}
 }
 
-// ---- Section 4: per-modality caps and allowlists ---------------------------
+// ---- Per-modality caps and allowlists --------------------------------------
 
 // TestReplaceMediaURLsStep_MaxVideoDownloadSize_OverridesGlobal shows a
 // video payload accepted with max_video_download_size high enough while the
-// same body under max_download_size alone is rejected. Locks in the
+// same body under max_download_size alone is rejected, exercising the
 // per-modality override path.
 func TestReplaceMediaURLsStep_MaxVideoDownloadSize_OverridesGlobal(t *testing.T) {
 	// 2 MB video payload.

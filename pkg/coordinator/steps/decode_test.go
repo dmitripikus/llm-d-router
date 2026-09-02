@@ -447,7 +447,7 @@ func TestDecodeStep_TransportError(t *testing.T) {
 	}
 }
 
-// ---- Section 5: injectUUIDs widened to audio/video --------------------------
+// ---- injectUUIDs across audio, video, and input_audio ---------------------
 
 // TestInjectUUIDs_TagsAllMediaParts asserts every recognized media
 // content-part type receives a uuid tag matching its (modality, local index)

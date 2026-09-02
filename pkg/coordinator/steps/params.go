@@ -33,9 +33,6 @@ const (
 // MultimodalEntry and are used as the key into per-modality feature maps
 // (mm_hashes, mm_placeholders, kwargs_data). Values mirror EPP's canonical
 // modality enum at pkg/epp/framework/interface/requesthandling/types.go.
-// The coordinator today only produces ModalityImage; ModalityAudio and
-// ModalityVideo are reserved for the follow-up widening (see
-// coordinator-audio-video-plan.md).
 const (
 	ModalityImage = "image"
 	ModalityAudio = "audio"
