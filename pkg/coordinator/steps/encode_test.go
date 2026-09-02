@@ -752,17 +752,40 @@ func TestBuildSingleMediaContent_PerModality(t *testing.T) {
 }
 
 // TestBuildSingleMediaContent_OutOfRangeFallback asserts a bug-safe empty
-// image_url is returned when the localIdx is out of range for the given
-// modality. The path is not expected to run under correct entry↔part pairing.
+// URL part of the matching modality is returned when localIdx is out of
+// range. The path is not expected to run under correct entry↔part
+// pairing; the fallback must at least keep the emitted sub-request
+// self-consistent (audio entry → audio part shape).
 func TestBuildSingleMediaContent_OutOfRangeFallback(t *testing.T) {
 	partsByMod := map[string][]map[string]any{
 		ModalityImage: {
 			{"type": "image_url", "image_url": map[string]any{"url": "u0"}},
 		},
 	}
-	got := buildSingleMediaContent(partsByMod, ModalityAudio, 0)
-	if got["type"] != imageURLPartType {
-		t.Errorf("expected fallback type %q, got %v", imageURLPartType, got["type"])
+	for _, tc := range []struct {
+		name     string
+		modality string
+		wantType string
+	}{
+		{"image", ModalityImage, imageURLPartType},
+		{"audio", ModalityAudio, audioURLPartType},
+		{"video", ModalityVideo, videoURLPartType},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// 99 is out of range for every modality in partsByMod, so the
+			// fallback path runs regardless of which modality is under test.
+			got := buildSingleMediaContent(partsByMod, tc.modality, 99)
+			if got["type"] != tc.wantType {
+				t.Errorf("type = %v, want %q", got["type"], tc.wantType)
+			}
+			inner, ok := got[tc.wantType].(map[string]any)
+			if !ok {
+				t.Fatalf("inner key %q missing or wrong type: %+v", tc.wantType, got)
+			}
+			if inner["url"] != "" {
+				t.Errorf("fallback url = %v, want empty", inner["url"])
+			}
+		})
 	}
 }
 

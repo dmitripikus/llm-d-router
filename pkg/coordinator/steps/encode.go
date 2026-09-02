@@ -280,6 +280,16 @@ func collectMediaParts(body map[string]any) map[string][]map[string]any {
 	return partsByMod
 }
 
+// modalityFallbackPartType names the URL-shaped content-part type used
+// for the buildSingleMediaContent fallback when localIdx is out of range.
+// Keying by modality keeps the emitted sub-request self-consistent — an
+// audio fanout entry does not get shipped inside an image_url part.
+var modalityFallbackPartType = map[string]string{
+	ModalityImage: imageURLPartType,
+	ModalityAudio: audioURLPartType,
+	ModalityVideo: videoURLPartType,
+}
+
 // buildSingleMediaContent returns the OpenAI content-part representing the
 // entry at (modality, localIdx) in the per-modality parts map. It emits
 // the part verbatim in its native shape — {type: <partType>, <partType>:
@@ -287,16 +297,21 @@ func collectMediaParts(body map[string]any) map[string][]map[string]any {
 // encode sub-request's messages[0].content slice.
 //
 // If localIdx is out of range for the given modality, an empty-shaped
-// image_url is returned as a safe fallback. Reaching that path means the
-// coordinator's entry↔part pairing is broken; the fallback prevents a
-// panic but does not hide the bug — the encoder will receive an empty
-// image URL and reject the sub-request loudly.
+// URL part of the matching modality is returned as a safe fallback.
+// Reaching that path means the coordinator's entry↔part pairing is
+// broken; the fallback prevents a panic but does not hide the bug — the
+// encoder receives an empty URL of the right modality and rejects the
+// sub-request loudly.
 func buildSingleMediaContent(partsByMod map[string][]map[string]any, modality string, localIdx int) map[string]any {
 	parts := partsByMod[modality]
 	if localIdx < 0 || localIdx >= len(parts) {
+		partType, ok := modalityFallbackPartType[modality]
+		if !ok {
+			partType = imageURLPartType
+		}
 		return map[string]any{
-			"type":      imageURLPartType,
-			"image_url": map[string]any{"url": ""},
+			"type":   partType,
+			partType: map[string]any{"url": ""},
 		}
 	}
 	p := parts[localIdx]
