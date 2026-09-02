@@ -64,8 +64,8 @@ func TestHandleEC_Multimedia(t *testing.T) {
 			name:    "nixl audio",
 			handler: (*Server).handleECNIXL,
 			items: []map[string]any{
-				inlineAudioItem("aaa", "wav"),
-				inlineAudioItem("bbb", "wav"),
+				inlineAudioItem("aaa"),
+				inlineAudioItem("bbb"),
 			},
 			wantECParams: true,
 			wantECLen:    2,
@@ -85,8 +85,8 @@ func TestHandleEC_Multimedia(t *testing.T) {
 			name:    "shared_storage audio",
 			handler: (*Server).handleECSharedStorage,
 			items: []map[string]any{
-				inlineAudioItem("aaa", "wav"),
-				inlineAudioItem("bbb", "wav"),
+				inlineAudioItem("aaa"),
+				inlineAudioItem("bbb"),
 			},
 			wantECParams: false,
 			wantEncCalls: 2,
