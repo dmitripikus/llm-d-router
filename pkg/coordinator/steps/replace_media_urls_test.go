@@ -1188,6 +1188,109 @@ func TestReplaceMediaURLsStep_AudioURL_Downloads(t *testing.T) {
 	}
 }
 
+// TestReplaceMediaURLsStep_AudioURL_RejectsUnexpectedContentType asserts an
+// audio_url whose origin serves a non-audio Content-Type (e.g. text/html)
+// is rejected as ErrBadRequest. This closes an SSRF-style widening where
+// a caller could exploit an audio_url slot to smuggle text or HTML.
+func TestReplaceMediaURLsStep_AudioURL_RejectsUnexpectedContentType(t *testing.T) {
+	badServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte("<html></html>"))
+	}))
+	defer badServer.Close()
+
+	step := newLoopbackStep(t, map[string]any{"download_timeout": "5s"})
+	reqCtx := &pipeline.RequestContext{
+		Body: map[string]any{
+			"messages": []any{
+				map[string]any{
+					"role": "user",
+					"content": []any{
+						map[string]any{
+							"type":      "audio_url",
+							"audio_url": map[string]any{"url": badServer.URL + "/clip.wav"},
+						},
+					},
+				},
+			},
+		},
+	}
+	err := step.Execute(context.Background(), reqCtx)
+	if err == nil {
+		t.Fatal("expected error for audio_url served as text/html")
+	}
+	if !errors.Is(err, pipeline.ErrBadRequest) {
+		t.Fatalf("expected ErrBadRequest, got %v", err)
+	}
+}
+
+// TestReplaceMediaURLsStep_VideoURL_RejectsUnexpectedContentType mirrors the
+// audio case for video_url served with a non-video Content-Type.
+func TestReplaceMediaURLsStep_VideoURL_RejectsUnexpectedContentType(t *testing.T) {
+	badServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte("<html></html>"))
+	}))
+	defer badServer.Close()
+
+	step := newLoopbackStep(t, map[string]any{"download_timeout": "5s"})
+	reqCtx := &pipeline.RequestContext{
+		Body: map[string]any{
+			"messages": []any{
+				map[string]any{
+					"role": "user",
+					"content": []any{
+						map[string]any{
+							"type":      "video_url",
+							"video_url": map[string]any{"url": badServer.URL + "/clip.mp4"},
+						},
+					},
+				},
+			},
+		},
+	}
+	err := step.Execute(context.Background(), reqCtx)
+	if err == nil {
+		t.Fatal("expected error for video_url served as text/html")
+	}
+	if !errors.Is(err, pipeline.ErrBadRequest) {
+		t.Fatalf("expected ErrBadRequest, got %v", err)
+	}
+}
+
+// TestReplaceMediaURLsStep_ImageURL_PermissiveContentType documents that
+// image_url downloads intentionally keep their pre-existing permissive
+// behavior — an unexpected Content-Type is accepted. Audio and video are
+// stricter; image is not tightened here to avoid breaking traffic that
+// relies on the current behavior.
+func TestReplaceMediaURLsStep_ImageURL_PermissiveContentType(t *testing.T) {
+	oddServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("not-really-an-image"))
+	}))
+	defer oddServer.Close()
+
+	step := newLoopbackStep(t, map[string]any{"download_timeout": "5s"})
+	reqCtx := &pipeline.RequestContext{
+		Body: map[string]any{
+			"messages": []any{
+				map[string]any{
+					"role": "user",
+					"content": []any{
+						map[string]any{
+							"type":      "image_url",
+							"image_url": map[string]any{"url": oddServer.URL + "/thing.jpg"},
+						},
+					},
+				},
+			},
+		},
+	}
+	if err := step.Execute(context.Background(), reqCtx); err != nil {
+		t.Fatalf("expected permissive behavior for image_url, got %v", err)
+	}
+}
+
 // TestReplaceMediaURLsStep_VideoURL_Downloads mirrors the audio case for
 // video_url with a video/mp4 payload.
 func TestReplaceMediaURLsStep_VideoURL_Downloads(t *testing.T) {

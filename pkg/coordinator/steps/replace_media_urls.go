@@ -299,14 +299,18 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 			continue
 		}
 		g.Go(func() error {
-			// The download path deliberately does NOT enforce
-			// allowedContentTypeForModality against the server's Content-Type —
-			// existing behavior for image_url (see TestReplaceMediaURLsStep_EmptyContentType).
-			// Audio/video URLs inherit the same permissive treatment. Fixing
-			// this uniformly is a separate concern (security review).
 			data, contentType, err := s.download(gCtx, ref.url, ref.modality)
 			if err != nil {
 				return fmt.Errorf("downloading %s: %w", ref.url, err)
+			}
+			// Audio and video decoders have historically carried more CVEs
+			// than image decoders, so the origin's Content-Type is checked
+			// against the per-modality allowlist for those two. image_url
+			// keeps its pre-existing permissive treatment on downloads (data
+			// URIs are still checked).
+			if ref.modality != ModalityImage && !s.allowedContentTypeForModality(contentType, ref.modality) {
+				return fmt.Errorf("downloaded content type %q not allowed for %s at message %d part %d: %w",
+					contentType, ref.modality, ref.msgIdx, ref.partIdx, pipeline.ErrBadRequest)
 			}
 			results[i] = downloadResult{
 				ref:         ref,
