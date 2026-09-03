@@ -1658,6 +1658,87 @@ func TestReplaceMediaURLsStep_MixedImageAudioVideo(t *testing.T) {
 	}
 }
 
+// TestReplaceMediaURLsStep_MixedAudio_WalkerOrder locks in the walker-order
+// invariant for the audio modality, which is the only modality today
+// carrying both a URL-based variant (audio_url) and an inline variant
+// (input_audio). The request has input_audio A first and audio_url B
+// second. MultimodalEntries must reflect that order: entries[0] carries
+// A's inline payload and entries[1] carries B's downloaded payload. A
+// split append (URLs first, inline second) would swap them, and the
+// encode / decode steps -- which walk parts in request order -- would
+// then pair each audio entry with the wrong content part.
+func TestReplaceMediaURLsStep_MixedAudio_WalkerOrder(t *testing.T) {
+	audioServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "audio/wav")
+		_, _ = w.Write([]byte("bytes-of-B"))
+	}))
+	defer audioServer.Close()
+
+	const inlineData = "SU5MSU5FLUE=" // "INLINE-A" base64
+	step := newLoopbackStep(t, map[string]any{"download_timeout": "5s"})
+	reqCtx := &pipeline.RequestContext{
+		Body: map[string]any{
+			"messages": []any{
+				map[string]any{
+					"role": "user",
+					"content": []any{
+						map[string]any{
+							"type":        "input_audio",
+							"input_audio": map[string]any{"data": inlineData, "format": "wav"},
+						},
+						map[string]any{
+							"type":      "audio_url",
+							"audio_url": map[string]any{"url": audioServer.URL + "/clip.wav"},
+						},
+					},
+				},
+			},
+		},
+	}
+	if err := step.Execute(context.Background(), reqCtx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := len(reqCtx.MultimodalEntries); got != 2 {
+		t.Fatalf("expected 2 audio entries, got %d", got)
+	}
+	// Entry 0 must be the inline part, entry 1 must be the URL part.
+	if reqCtx.MultimodalEntries[0].Base64Data != inlineData {
+		t.Errorf("entries[0].Base64Data = %q, want the inline payload %q",
+			reqCtx.MultimodalEntries[0].Base64Data, inlineData)
+	}
+	if reqCtx.MultimodalEntries[0].ContentType != "audio/wav" {
+		t.Errorf("entries[0].ContentType = %q, want audio/wav (from input_audio format)",
+			reqCtx.MultimodalEntries[0].ContentType)
+	}
+	if reqCtx.MultimodalEntries[1].Base64Data == inlineData {
+		t.Errorf("entries[1].Base64Data still equals A's payload; walker order was not preserved")
+	}
+	// The URL slot must have been overwritten in place with the downloaded
+	// data URI (empty original url replaced by "data:...").
+	msgs := reqCtx.Body["messages"].([]any)
+	urlPart := msgs[0].(map[string]any)["content"].([]any)[1].(map[string]any)["audio_url"].(map[string]any)
+	if got, _ := urlPart["url"].(string); !strings.HasPrefix(got, "data:audio/wav;base64,") {
+		t.Errorf("audio_url url = %q, want inlined data URI", got)
+	}
+
+	// Downstream alignment: collectMediaParts walks the SAME body in
+	// request order. entries[0] (inline) must pair with partsByMod[audio][0]
+	// (the input_audio part) and entries[1] (URL) with partsByMod[audio][1]
+	// (the audio_url part). Any regression that swaps entries here would
+	// break this pairing silently.
+	partsByMod := collectMediaParts(reqCtx.Body)
+	audioParts := partsByMod[ModalityAudio]
+	if got := len(audioParts); got != 2 {
+		t.Fatalf("partsByMod[audio] len = %d, want 2", got)
+	}
+	if _, ok := audioParts[0]["input_audio"].(map[string]any); !ok {
+		t.Errorf("audio parts[0] = %+v, want the input_audio part first", audioParts[0])
+	}
+	if _, ok := audioParts[1]["audio_url"].(map[string]any); !ok {
+		t.Errorf("audio parts[1] = %+v, want the audio_url part second", audioParts[1])
+	}
+}
+
 // TestReplaceMediaURLsStep_MaxEntriesCountsAllModalities pushes max entries
 // past the configured cap by combining one image, one audio, and one video.
 // three total against a cap of 2. Expected: rejected.

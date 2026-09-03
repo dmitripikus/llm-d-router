@@ -207,8 +207,14 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 		return nil
 	}
 
-	var urlRefs []urlMediaRef
-	var inlineRefs []inlineMediaRef
+	// Collect every media part into one walker-order slice, tagged by kind.
+	// MultimodalEntries and the download-result slots below both index by
+	// this walker position, so encode.collectMediaParts and
+	// decode.injectUUIDs (which walk parts in the same order) pair entry i
+	// with the i-th part of its modality. Splitting URL and inline parts
+	// into separate append passes would reorder audio entries whenever a
+	// request mixes audio_url and input_audio.
+	var refs []mediaRef
 	for msgIdx, msg := range messages {
 		msgMap, ok := msg.(map[string]any)
 		if !ok {
@@ -238,10 +244,11 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 					continue
 				}
 				format, _ := innerMap["format"].(string)
-				inlineRefs = append(inlineRefs, inlineMediaRef{
+				refs = append(refs, mediaRef{
 					msgIdx:   msgIdx,
 					partIdx:  partIdx,
 					modality: modality,
+					isInline: true,
 					data:     data,
 					format:   format,
 				})
@@ -256,7 +263,7 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 			if !ok {
 				continue
 			}
-			urlRefs = append(urlRefs, urlMediaRef{
+			refs = append(refs, mediaRef{
 				msgIdx:   msgIdx,
 				partIdx:  partIdx,
 				modality: modality,
@@ -266,13 +273,12 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 		}
 	}
 
-	totalEntries := len(urlRefs) + len(inlineRefs)
-	if totalEntries == 0 {
+	if len(refs) == 0 {
 		return nil
 	}
 
-	if s.maxMultimodalEntries > 0 && totalEntries > s.maxMultimodalEntries {
-		return fmt.Errorf("too many multimodal entries: got %d, max %d: %w", totalEntries, s.maxMultimodalEntries, pipeline.ErrBadRequest)
+	if s.maxMultimodalEntries > 0 && len(refs) > s.maxMultimodalEntries {
+		return fmt.Errorf("too many multimodal entries: got %d, max %d: %w", len(refs), s.maxMultimodalEntries, pipeline.ErrBadRequest)
 	}
 
 	// Cancel any in-flight downloads when Execute returns early (cancelled
@@ -283,11 +289,23 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 	g, gCtx := errgroup.WithContext(ctx)
 	g.SetLimit(s.maxConcurrentDownloads)
 
-	results := make([]downloadResult, len(urlRefs))
-	for i, ref := range urlRefs {
+	// results parallels refs: results[i] is the outcome of processing
+	// refs[i]. URL refs may be filled synchronously (data URI) or by a
+	// download goroutine; inline refs are validated in the walker-order
+	// append pass after g.Wait.
+	results := make([]mediaResult, len(refs))
+	urlCount := 0
+	for i, ref := range refs {
 		if err := gCtx.Err(); err != nil {
 			break
 		}
+		if ref.isInline {
+			// Inline refs are validated after downloads complete so their
+			// MIME/size errors do not cancel in-flight URL downloads
+			// prematurely (matches prior behavior).
+			continue
+		}
+		urlCount++
 		if strings.HasPrefix(ref.url, "data:") {
 			contentType, b64, err := parseDataURI(ref.url)
 			if err != nil {
@@ -296,7 +314,7 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 			if !s.allowedContentTypeForModality(contentType, ref.modality) {
 				return fmt.Errorf("data URI content type %q not allowed for %s at message %d part %d: %w", contentType, ref.modality, ref.msgIdx, ref.partIdx, pipeline.ErrBadRequest)
 			}
-			results[i] = downloadResult{ref: ref, base64Data: b64, contentType: contentType}
+			results[i] = mediaResult{base64Data: b64, contentType: contentType}
 			continue
 		}
 		g.Go(func() error {
@@ -313,8 +331,7 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 				return fmt.Errorf("downloaded content type %q not allowed for %s at message %d part %d: %w",
 					contentType, ref.modality, ref.msgIdx, ref.partIdx, pipeline.ErrBadRequest)
 			}
-			results[i] = downloadResult{
-				ref:         ref,
+			results[i] = mediaResult{
 				base64Data:  base64.StdEncoding.EncodeToString(data),
 				contentType: contentType,
 			}
@@ -324,7 +341,7 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 
 	// Log proxy presence only: HTTP(S)_PROXY URLs can carry basic-auth
 	// credentials (http://user:pass@host) that must not reach logs.
-	logger.V(logutil.TRACE).Info("downloading media", "count", len(urlRefs), "http_proxy_set", os.Getenv("HTTP_PROXY") != "", "https_proxy_set", os.Getenv("HTTPS_PROXY") != "")
+	logger.V(logutil.TRACE).Info("downloading media", "count", urlCount, "http_proxy_set", os.Getenv("HTTP_PROXY") != "", "https_proxy_set", os.Getenv("HTTPS_PROXY") != "")
 
 	if err := g.Wait(); err != nil {
 		return err
@@ -333,49 +350,48 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 		return err
 	}
 
-	for _, r := range results {
-		// r.ref.urlMap is set on every result the download loop assigns.
-		// Skip a zero-valued slot defensively so a future path that leaves
-		// results[i] unset after g.Wait cannot panic on a nil-map write.
-		if r.ref.urlMap == nil {
+	// Walker-order pass. URL refs get their data URI written back in
+	// place; inline refs are validated (MIME + size) now that downloads
+	// have settled. Every ref appends exactly one MultimodalEntry, in
+	// walker order.
+	for i, ref := range refs {
+		if ref.isInline {
+			contentType, err := audioFormatToMIME(ref.format)
+			if err != nil {
+				return fmt.Errorf("input_audio at message %d part %d: %w: %w",
+					ref.msgIdx, ref.partIdx, err, pipeline.ErrBadRequest)
+			}
+			if !s.allowedContentTypeForModality(contentType, ref.modality) {
+				return fmt.Errorf("input_audio content type %q not allowed at message %d part %d: %w",
+					contentType, ref.msgIdx, ref.partIdx, pipeline.ErrBadRequest)
+			}
+			// Padded base64 for n bytes has length 4 * ceil(n/3). Compute
+			// the cap and reject when the string alone exceeds it, so an
+			// oversized payload is caught before decoding. input_audio size
+			// is bounded by the audio-modality cap.
+			sizeCap := s.downloadSizeFor(ref.modality)
+			maxBase64Len := 4 * ((sizeCap + 2) / 3)
+			if int64(len(ref.data)) > maxBase64Len {
+				return fmt.Errorf("input_audio at message %d part %d exceeds size limit: %w",
+					ref.msgIdx, ref.partIdx, pipeline.ErrBadRequest)
+			}
+			// The inline "data" field already carries the base64 payload
+			// the backend needs, so the body passes through unmodified.
+			appendMultimodalEntry(reqCtx, ref.modality, contentType, ref.data)
 			continue
 		}
-		if !strings.HasPrefix(r.ref.url, "data:") {
-			r.ref.urlMap["url"] = fmt.Sprintf("data:%s;base64,%s", r.contentType, r.base64Data)
+		r := results[i]
+		// r.contentType is set on every URL ref the download/parse path
+		// populated. Skip a zero-valued slot defensively so a future path
+		// that leaves results[i] unset after g.Wait cannot panic on a
+		// nil-map write.
+		if ref.urlMap == nil {
+			continue
 		}
-		// All modalities feed into MultimodalEntries: the encode step's
-		// fanout iterates entries and produces per-modality sub-requests.
-		// The encoder pod must accept audio/video content-part types.
-		appendMultimodalEntry(reqCtx, r.ref.modality, r.contentType, r.base64Data)
-	}
-
-	// input_audio parts carry inline base64 already; no download needed,
-	// but MIME and size must still be validated so a caller cannot smuggle
-	// text or oversized payloads through the audio slot. Validated items
-	// enter MultimodalEntries the same way downloaded audio does.
-	for _, ref := range inlineRefs {
-		contentType, err := audioFormatToMIME(ref.format)
-		if err != nil {
-			return fmt.Errorf("input_audio at message %d part %d: %w: %w",
-				ref.msgIdx, ref.partIdx, err, pipeline.ErrBadRequest)
+		if !strings.HasPrefix(ref.url, "data:") {
+			ref.urlMap["url"] = fmt.Sprintf("data:%s;base64,%s", r.contentType, r.base64Data)
 		}
-		if !s.allowedContentTypeForModality(contentType, ref.modality) {
-			return fmt.Errorf("input_audio content type %q not allowed at message %d part %d: %w",
-				contentType, ref.msgIdx, ref.partIdx, pipeline.ErrBadRequest)
-		}
-		// Padded base64 for n bytes has length 4 * ceil(n/3). Compute that
-		// cap and reject when the string alone exceeds it, so an oversized
-		// payload is caught before decoding. input_audio size is bounded
-		// by the audio-modality cap.
-		sizeCap := s.downloadSizeFor(ref.modality)
-		maxBase64Len := 4 * ((sizeCap + 2) / 3)
-		if int64(len(ref.data)) > maxBase64Len {
-			return fmt.Errorf("input_audio at message %d part %d exceeds size limit: %w",
-				ref.msgIdx, ref.partIdx, pipeline.ErrBadRequest)
-		}
-		// Body passes through unmodified: the "data" field already carries
-		// the base64 payload the backend needs.
-		appendMultimodalEntry(reqCtx, ref.modality, contentType, ref.data)
+		appendMultimodalEntry(reqCtx, ref.modality, r.contentType, r.base64Data)
 	}
 
 	return nil
@@ -439,30 +455,36 @@ func (s *ReplaceMediaURLsStep) download(ctx context.Context, rawURL, modality st
 	return data, contentType, nil
 }
 
-// urlMediaRef locates a URL-based multimodal content part (image_url /
-// audio_url / video_url) in the request body. urlMap is the inner map
-// carrying the "url" key so the download result can be inlined in place.
-type urlMediaRef struct {
+// mediaRef locates one media content part in the request body, tagged by
+// kind. isInline discriminates the two variants:
+//
+//   - URL-based parts (image_url / audio_url / video_url) set isInline=false
+//     and fill url + urlMap. urlMap is the inner map carrying the "url" key
+//     so the download result can be inlined in place.
+//   - input_audio parts set isInline=true and fill data + format. Their
+//     base64 payload is already inline in the request body; only MIME and
+//     size validation are needed.
+//
+// Refs are collected in walker order so MultimodalEntries append order
+// matches encode.collectMediaParts / decode.injectUUIDs walk order.
+type mediaRef struct {
 	msgIdx   int
 	partIdx  int
 	modality string
-	url      string
-	urlMap   map[string]any
+	isInline bool
+	// URL variant:
+	url    string
+	urlMap map[string]any
+	// Inline variant:
+	data   string // base64 payload
+	format string // "wav", "mp3", ...
 }
 
-// inlineMediaRef locates an input_audio content part. Its base64 payload
-// is already inline in the request body so no download is needed.
-// only MIME + size validation.
-type inlineMediaRef struct {
-	msgIdx   int
-	partIdx  int
-	modality string
-	data     string // base64 payload
-	format   string // "wav", "mp3", ...
-}
-
-type downloadResult struct {
-	ref         urlMediaRef
+// mediaResult carries the outcome of processing one URL-based mediaRef:
+// the MIME type and base64 payload the entry ends up carrying. Inline
+// refs do not use a result slot; their fields are validated and appended
+// straight to MultimodalEntries in the walker-order pass.
+type mediaResult struct {
 	base64Data  string
 	contentType string
 }
