@@ -1140,10 +1140,9 @@ func TestReplaceMediaURLsStep_CancelledContextSkipsDataURIParse(t *testing.T) {
 
 // ---- Audio / video ingestion -----------------------------------------------
 
-// TestReplaceMediaURLsStep_AudioURL_Downloads asserts that an audio_url is
-// fetched, size-capped, MIME-checked (against the audio allowlist for data
-// URIs) and inlined as a data URI. Because audio does not enter the encoder
-// pipeline yet, MultimodalEntries stays empty.
+// TestReplaceMediaURLsStep_AudioURL_Downloads asserts that an audio_url
+// is fetched, size-capped, MIME-checked, inlined as a data URI, and
+// added to MultimodalEntries as one audio entry.
 func TestReplaceMediaURLsStep_AudioURL_Downloads(t *testing.T) {
 	audioServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "audio/wav")
@@ -1334,8 +1333,9 @@ func TestReplaceMediaURLsStep_VideoURL_Downloads(t *testing.T) {
 	}
 }
 
-// TestReplaceMediaURLsStep_AudioDataURI asserts a valid audio data URI under
-// audio_url is accepted (kept in place) and MultimodalEntries stays empty.
+// TestReplaceMediaURLsStep_AudioDataURI asserts a valid audio data URI
+// under audio_url is accepted (kept in place) and added to
+// MultimodalEntries as one audio entry.
 func TestReplaceMediaURLsStep_AudioDataURI(t *testing.T) {
 	step, _ := NewReplaceMediaURLsStep(nil, map[string]any{})
 	const dataURI = "data:audio/wav;base64,UklGRg=="
@@ -1590,10 +1590,10 @@ func TestReplaceMediaURLsStep_InputAudio_OversizedPayload(t *testing.T) {
 	}
 }
 
-// TestReplaceMediaURLsStep_MixedImageAudioVideo runs one request with one
-// image URL, one audio URL, and one video URL. The image feeds into
-// MultimodalEntries; audio and video are inlined but stay out. All three
-// count against max_multimodal_entries.
+// TestReplaceMediaURLsStep_MixedImageAudioVideo runs one request with
+// one image URL, one audio URL, and one video URL. All three are
+// inlined as data URIs and added to MultimodalEntries in walker order,
+// and all three count against max_multimodal_entries.
 func TestReplaceMediaURLsStep_MixedImageAudioVideo(t *testing.T) {
 	mediaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -1659,8 +1659,8 @@ func TestReplaceMediaURLsStep_MixedImageAudioVideo(t *testing.T) {
 }
 
 // TestReplaceMediaURLsStep_MixedAudio_WalkerOrder locks in the walker-order
-// invariant for the audio modality, which is the only modality today
-// carrying both a URL-based variant (audio_url) and an inline variant
+// invariant for the audio modality, which is the only modality that
+// carries both a URL-based variant (audio_url) and an inline variant
 // (input_audio). The request has input_audio A first and audio_url B
 // second. MultimodalEntries must reflect that order: entries[0] carries
 // A's inline payload and entries[1] carries B's downloaded payload. A
