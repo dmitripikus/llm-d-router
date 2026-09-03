@@ -300,9 +300,8 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 			break
 		}
 		if ref.isInline {
-			// Inline refs are validated after downloads complete so their
-			// MIME/size errors do not cancel in-flight URL downloads
-			// prematurely (matches prior behavior).
+			// Skip inline refs here; they are validated in the walker-order
+			// pass below along with the download results.
 			continue
 		}
 		urlCount++
