@@ -40,6 +40,11 @@ const (
 	testImageURL2 = "https://vllm-public-assets.s3.us-west-2.amazonaws.com/multimodal_asset/flycatcher.jpeg"
 	// testVideoURL is a publicly accessible video used in multimodal e2e tests.
 	testVideoURL = "https://www.bogotobogo.com/python/OpenCV_Python/images/mean_shift_tracking/slow_traffic_small.mp4"
+	// testVideoURL2 is a second distinct URL string used to exercise multi-video
+	// fan-out. The router deduplicates by exact URL string, so a query-string
+	// variant is sufficient; the simulator never fetches the URL, so
+	// reachability of the query variant does not matter.
+	testVideoURL2 = testVideoURL + "?v=2"
 	// testImageEmbeds is a small dummy base64-encoded tensor used to test image_embeds requests.
 	// The actual bytes are not processed by the simulator; only routing behaviour is validated.
 	testImageEmbeds = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
@@ -631,8 +636,9 @@ var _ = ginkgo.Describe("Run end to end tests", func() {
 				func() (string, string) { return runChatCompletionWithAudios() },
 				// Multi-audio request: two input_audio blocks in a single request.
 				func() (string, string) { return runChatCompletionWithAudios(testAudioData, testAudioData) },
-				// Multi-video request: two video_url blocks in a single request.
-				func() (string, string) { return runChatCompletionWithVideos(testVideoURL, testVideoURL) },
+				// Multi-video request: two distinct video URLs so the router's URL
+				// dedup does not collapse them, exercising per-item fan-out.
+				func() (string, string) { return runChatCompletionWithVideos(testVideoURL, testVideoURL2) },
 				// Mixed-media request: image + audio + video combined.
 				func() (string, string) {
 					return runChatCompletionWithMixedMedia(
