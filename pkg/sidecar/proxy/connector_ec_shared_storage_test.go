@@ -313,6 +313,13 @@ func videoURLItem(url string) map[string]any {
 	return map[string]any{"type": "video_url", "video_url": map[string]any{"url": url}}
 }
 
+// audioURLItem builds an audio_url content item. audio_url is the URL-based,
+// dedup-eligible audio type (paired with image_url and video_url in mmTypes);
+// inlineAudioItem covers the input_audio inline path instead.
+func audioURLItem(url string) map[string]any {
+	return map[string]any{"type": "audio_url", "audio_url": map[string]any{"url": url}}
+}
+
 // inlineAudioItem builds an input_audio content item. Format is fixed to
 // "wav" — no test currently exercises another format; add a parameter back
 // when a caller needs one.

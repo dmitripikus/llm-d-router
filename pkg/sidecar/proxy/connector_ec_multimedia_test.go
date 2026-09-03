@@ -31,12 +31,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// TestHandleEC_Multimedia asserts that video_url and input_audio items flow
-// through both EC connectors the same way image_url items do. mmTypes in
-// connector_ec_common.go treats all four uniformly; this table exercises the
-// video and audio paths against handleECNIXL (threads encoder ec_transfer_params
-// into the prefill body) and handleECSharedStorage (primer only — encoder
-// responses are discarded).
+// TestHandleEC_Multimedia asserts that video_url, audio_url, and input_audio
+// items flow through both EC connectors the same way image_url items do.
+// mmTypes in connector_ec_common.go treats video_url / audio_url uniformly
+// with image_url (URL-based, dedup-eligible), while input_audio is inline and
+// never deduplicates. This table exercises those paths against handleECNIXL
+// (threads encoder ec_transfer_params into the prefill body) and
+// handleECSharedStorage (primer only — encoder responses are discarded).
 //
 // Inline audio never deduplicates (see fanoutEncoderPrimerDeduplication note),
 // so two input_audio blocks always produce two encoder calls.
@@ -61,7 +62,18 @@ func TestHandleEC_Multimedia(t *testing.T) {
 			wantEncCalls: 2,
 		},
 		{
-			name:    "nixl audio",
+			name:    "nixl audio_url",
+			handler: (*Server).handleECNIXL,
+			items: []map[string]any{
+				audioURLItem("https://example.com/a1.mp3"),
+				audioURLItem("https://example.com/a2.mp3"),
+			},
+			wantECParams: true,
+			wantECLen:    2,
+			wantEncCalls: 2,
+		},
+		{
+			name:    "nixl input_audio",
 			handler: (*Server).handleECNIXL,
 			items: []map[string]any{
 				inlineAudioItem("aaa"),
@@ -82,7 +94,17 @@ func TestHandleEC_Multimedia(t *testing.T) {
 			wantEncCalls: 2,
 		},
 		{
-			name:    "shared_storage audio",
+			name:    "shared_storage audio_url",
+			handler: (*Server).handleECSharedStorage,
+			items: []map[string]any{
+				audioURLItem("https://example.com/a1.mp3"),
+				audioURLItem("https://example.com/a2.mp3"),
+			},
+			wantECParams: false,
+			wantEncCalls: 2,
+		},
+		{
+			name:    "shared_storage input_audio",
 			handler: (*Server).handleECSharedStorage,
 			items: []map[string]any{
 				inlineAudioItem("aaa"),
