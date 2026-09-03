@@ -46,8 +46,10 @@ var twoImages = []mmSpec{
 }
 
 // mmModalities lists the modality labels each /inference/v1/generate
-// encode and prefill test iterates over. Order matches the sidecar's
-// mmTypes in connector_ec_common.go.
+// encode and prefill test iterates over. These are the coarser bucket
+// names vLLM uses inside mm_hashes / mm_placeholders — distinct from
+// the OpenAI content-type strings (image_url, audio_url, video_url,
+// input_audio) that mmTypes in connector_ec_common.go keys on.
 var mmModalities = []string{"image", "video", "audio"}
 
 var _ = ginkgo.Describe("Direct gateway /inference/v1/generate encode against encode-only", ginkgo.Ordered, testWrapper(func() {
