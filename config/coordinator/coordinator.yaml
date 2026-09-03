@@ -35,7 +35,7 @@ server:
   read_timeout: 30s
 
   # write_timeout caps the entire response. For streaming completions this
-  # bounds the total in-flight time of a single chat — set generously.
+  # bounds the total in-flight time of a single chat, set generously.
   write_timeout: 120s
   
   # Kubernetes terminationGracePeriodSeconds must exceed shutdown_timeout; SSE
@@ -108,7 +108,7 @@ pipeline:
     # audio_url, and video_url content parts (base64-inlining them as data:
     # URIs), validates input_audio inline items, and seeds MultimodalEntries
     # for every recognized media part. All modalities feed into the encode
-    # step's fanout — the encoder pod must accept audio/video content-part
+    # step's fanout, the encoder pod must accept audio/video content-part
     # types.
     # -------------------------------------------------------------------
     - type: replace-media-urls
@@ -149,7 +149,7 @@ pipeline:
         # max_video_download_size overrides max_download_size for video_url
         # items. Videos routinely need 100+ MB per clip; leave commented out
         # only if your deployment truly does not accept video. Same codec
-        # CVE caveat as audio applies — treat pending security review as a
+        # CVE caveat as audio applies, treat pending security review as a
         # gate on raising this in production.
         # max_video_download_size: 200
 

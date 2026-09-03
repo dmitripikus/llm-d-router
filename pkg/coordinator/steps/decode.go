@@ -136,7 +136,7 @@ func (s *DecodeStep) injectTokensField(reqCtx *pipeline.RequestContext) {
 
 // injectUUIDs tags each media content part with the uuid the decode
 // backend uses for prefix-cache keying. Each part is paired with the
-// MultimodalEntry that shares its modality and local index — the same
+// MultimodalEntry that shares its modality and local index, the same
 // invariant the encode fanout uses. Non-media parts (text, tool_use,
 // unknown types) are skipped.
 func (s *DecodeStep) injectUUIDs(reqCtx *pipeline.RequestContext) {

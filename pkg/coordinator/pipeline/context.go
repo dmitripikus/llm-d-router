@@ -94,7 +94,7 @@ type RequestContext struct {
 // MultimodalEntry describes one downloaded multimodal item (e.g. an image) and
 // where it sits in the tokenized prompt. Index is its position in the request's
 // multimodal list. Modality identifies the OpenAI content-part type this entry
-// originated from — one of the steps.Modality* constants ("image", "audio",
+// originated from, one of the steps.Modality* constants ("image", "audio",
 // "video"). Base64Data and ContentType come from the media download; Hash and
 // KwargsData are filled in by the render step; Placeholder marks the span of
 // placeholder tokens the encode step replaces.

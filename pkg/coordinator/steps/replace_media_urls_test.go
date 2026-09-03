@@ -1260,7 +1260,7 @@ func TestReplaceMediaURLsStep_VideoURL_RejectsUnexpectedContentType(t *testing.T
 
 // TestReplaceMediaURLsStep_ImageURL_PermissiveContentType documents that
 // image_url downloads intentionally keep their pre-existing permissive
-// behavior — an unexpected Content-Type is accepted. Audio and video are
+// behavior, an unexpected Content-Type is accepted. Audio and video are
 // stricter; image is not tightened here to avoid breaking traffic that
 // relies on the current behavior.
 func TestReplaceMediaURLsStep_ImageURL_PermissiveContentType(t *testing.T) {
@@ -1564,7 +1564,7 @@ func TestReplaceMediaURLsStep_InputAudio_ExactlyAtCap(t *testing.T) {
 func TestReplaceMediaURLsStep_InputAudio_OversizedPayload(t *testing.T) {
 	// max_download_size in the constructor is given in megabytes.
 	step, _ := NewReplaceMediaURLsStep(nil, map[string]any{"max_download_size": 1})
-	// 1 MB * 4/3 ≈ 1_398_101 base64 chars. Build a slightly larger string.
+	// 1 MB * 4/3 ~= 1_398_101 base64 chars. Build a slightly larger string.
 	oversized := strings.Repeat("A", 2*1024*1024)
 	reqCtx := &pipeline.RequestContext{
 		Body: map[string]any{
@@ -1659,7 +1659,7 @@ func TestReplaceMediaURLsStep_MixedImageAudioVideo(t *testing.T) {
 }
 
 // TestReplaceMediaURLsStep_MaxEntriesCountsAllModalities pushes max entries
-// past the configured cap by combining one image, one audio, and one video —
+// past the configured cap by combining one image, one audio, and one video.
 // three total against a cap of 2. Expected: rejected.
 func TestReplaceMediaURLsStep_MaxEntriesCountsAllModalities(t *testing.T) {
 	step, _ := NewReplaceMediaURLsStep(nil, map[string]any{"max_multimodal_entries": 2})
@@ -1807,7 +1807,7 @@ func TestReplaceMediaURLsStep_RejectsInvalidPerModalityCap(t *testing.T) {
 
 // TestReplaceMediaURLsStep_AllowedAudioContentTypes_Overrides swaps in a
 // narrower audio allowlist ({audio/wav}) and asserts (a) audio/wav still
-// passes and (b) audio/mpeg — allowed by the default set — is now rejected.
+// passes and (b) audio/mpeg, allowed by the default set, is now rejected.
 func TestReplaceMediaURLsStep_AllowedAudioContentTypes_Overrides(t *testing.T) {
 	step, _ := NewReplaceMediaURLsStep(nil, map[string]any{
 		"allowed_audio_content_types": []any{"audio/wav"},
@@ -1859,7 +1859,7 @@ func TestReplaceMediaURLsStep_AllowedImageContentTypes_Overrides(t *testing.T) {
 
 // TestReplaceMediaURLsStep_AllowedContentTypes_DefaultsWhenUnset confirms
 // that when no per-modality allowlist is configured, the built-in defaults
-// apply — audio/mpeg (a default entry) is accepted.
+// apply, audio/mpeg (a default entry) is accepted.
 func TestReplaceMediaURLsStep_AllowedContentTypes_DefaultsWhenUnset(t *testing.T) {
 	step, _ := NewReplaceMediaURLsStep(nil, map[string]any{})
 	reqCtx := &pipeline.RequestContext{Body: map[string]any{
@@ -1877,7 +1877,7 @@ func TestReplaceMediaURLsStep_AllowedContentTypes_DefaultsWhenUnset(t *testing.T
 // TestReplaceMediaURLsStep_RejectsNonStringAllowedContentType fails
 // construction when a per-modality allowlist entry is not a string. The
 // alternative (silently dropping the bad entry) would be a security
-// downgrade — an operator's intent to lock down the allowlist is lost.
+// downgrade, an operator's intent to lock down the allowlist is lost.
 func TestReplaceMediaURLsStep_RejectsNonStringAllowedContentType(t *testing.T) {
 	_, err := NewReplaceMediaURLsStep(nil, map[string]any{
 		"allowed_audio_content_types": []any{"audio/wav", 42},

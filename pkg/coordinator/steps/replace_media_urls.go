@@ -451,7 +451,7 @@ type urlMediaRef struct {
 }
 
 // inlineMediaRef locates an input_audio content part. Its base64 payload
-// is already inline in the request body so no download is needed —
+// is already inline in the request body so no download is needed.
 // only MIME + size validation.
 type inlineMediaRef struct {
 	msgIdx   int

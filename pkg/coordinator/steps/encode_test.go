@@ -673,9 +673,9 @@ func TestCollectMediaParts_SkipsMalformedParts(t *testing.T) {
 			map[string]any{
 				"role": "user",
 				"content": []any{
-					// malformed: inner map missing → replace_media_urls skips
+					// malformed: inner map missing -> replace_media_urls skips
 					map[string]any{"type": "image_url"},
-					// malformed: url is nil → replace_media_urls skips
+					// malformed: url is nil -> replace_media_urls skips
 					map[string]any{"type": "image_url", "image_url": map[string]any{"url": nil}},
 					// well-formed
 					map[string]any{"type": "image_url", "image_url": map[string]any{"url": "u-good"}},
@@ -753,9 +753,9 @@ func TestBuildSingleMediaContent_PerModality(t *testing.T) {
 
 // TestBuildSingleMediaContent_OutOfRangeFallback asserts a bug-safe empty
 // URL part of the matching modality is returned when localIdx is out of
-// range. The path is not expected to run under correct entry↔part
+// range. The path is not expected to run under correct entry<->part
 // pairing; the fallback must at least keep the emitted sub-request
-// self-consistent (audio entry → audio part shape).
+// self-consistent (audio entry -> audio part shape).
 func TestBuildSingleMediaContent_OutOfRangeFallback(t *testing.T) {
 	partsByMod := map[string][]map[string]any{
 		ModalityImage: {
@@ -855,7 +855,7 @@ func TestEncodeStep_MixedModalityFanout(t *testing.T) {
 	if seq.Load() != 3 {
 		t.Fatalf("expected 3 fanout requests, got %d", seq.Load())
 	}
-	// Collect the modality keys we saw across the three requests — one per
+	// Collect the modality keys we saw across the three requests, one per
 	// entry, keyed by its modality.
 	sawKeys := map[string]bool{}
 	sawTypes := map[string]bool{}

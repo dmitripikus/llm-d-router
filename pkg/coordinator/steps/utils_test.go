@@ -648,7 +648,7 @@ func TestBuildMMFeatures_GroupsByModality(t *testing.T) {
 		t.Errorf("mm_hashes[video] = %v, want %v", got, want)
 	}
 
-	// kwargs_data preserves the cache-hit-sentinel (empty → nil) per-modality.
+	// kwargs_data preserves the cache-hit-sentinel (empty -> nil) per-modality.
 	kwargs, ok := features["kwargs_data"].(map[string][]any)
 	if !ok {
 		t.Fatalf("kwargs_data must be map[string][]any, got %T", features["kwargs_data"])
@@ -690,7 +690,7 @@ func TestExtractMultimodalEntries_MultiModalityResponse(t *testing.T) {
 	if len(entries) != 3 {
 		t.Fatalf("expected 3 entries (2 image + 1 audio), got %d", len(entries))
 	}
-	// Modalities sorted alphabetically → audio before image.
+	// Modalities sorted alphabetically -> audio before image.
 	if entries[0].Modality != ModalityAudio {
 		t.Errorf("entries[0].Modality = %q, want %q", entries[0].Modality, ModalityAudio)
 	}

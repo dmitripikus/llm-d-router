@@ -246,7 +246,7 @@ func (s *EncodeStep) buildEncodeBody(reqCtx *pipeline.RequestContext, tokenIDs [
 // collectMediaParts walks the request messages once and returns the media
 // parts grouped by modality, each per-modality list in walker (request)
 // order. The encode fanout looks up the content part for an entry by
-// (entry.Modality, per-modality position) — reading from the per-modality
+// (entry.Modality, per-modality position), reading from the per-modality
 // list at the per-modality position. Non-media parts (text, tool_use, etc.)
 // are skipped. Parts that fail mediaPartIsWellFormed are also skipped so
 // this walker's per-modality indexing stays in lock-step with the
@@ -287,7 +287,7 @@ func collectMediaParts(body map[string]any) map[string][]map[string]any {
 
 // modalityFallbackPartType names the URL-shaped content-part type used
 // for the buildSingleMediaContent fallback when localIdx is out of range.
-// Keying by modality keeps the emitted sub-request self-consistent — an
+// Keying by modality keeps the emitted sub-request self-consistent, an
 // audio fanout entry does not get shipped inside an image_url part.
 var modalityFallbackPartType = map[string]string{
 	ModalityImage: imageURLPartType,
@@ -297,14 +297,14 @@ var modalityFallbackPartType = map[string]string{
 
 // buildSingleMediaContent returns the OpenAI content-part representing the
 // entry at (modality, localIdx) in the per-modality parts map. It emits
-// the part verbatim in its native shape — {type: <partType>, <partType>:
-// <innerMap>} — so a caller can drop the returned map directly into an
+// the part verbatim in its native shape, {type: <partType>, <partType>:
+// <innerMap>}, so a caller can drop the returned map directly into an
 // encode sub-request's messages[0].content slice.
 //
 // If localIdx is out of range for the given modality, an empty-shaped
 // URL part of the matching modality is returned as a safe fallback.
-// Reaching that path means the coordinator's entry↔part pairing is
-// broken; the fallback prevents a panic but does not hide the bug — the
+// Reaching that path means the coordinator's entry<->part pairing is
+// broken; the fallback prevents a panic but does not hide the bug, the
 // encoder receives an empty URL of the right modality and rejects the
 // sub-request loudly.
 func buildSingleMediaContent(partsByMod map[string][]map[string]any, modality string, localIdx int) map[string]any {
