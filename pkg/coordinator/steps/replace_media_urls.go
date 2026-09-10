@@ -73,6 +73,13 @@ var partTypeModality = map[string]string{
 // can log it. partType must already be known to be a media type; modality is
 // the one partTypeModality maps it to.
 //
+// A part that fails the check is reported through ok rather than an error
+// because skipping it is the contract: it is passed through untouched and the
+// request still succeeds, so there is nothing for a caller to handle. An error
+// return would read as license to fail the request, and a caller that failed
+// where the others skip would break the pairing mediaPartIsWellFormed
+// describes. reason exists only to name the miss in a log.
+//
 // mediaPartIsWellFormed wraps this function for callers that need only the
 // yes/no answer, so every walker accepts and rejects the same parts.
 // mediaPartIsWellFormed records why that has to hold.
