@@ -471,20 +471,20 @@ func (s *ReplaceMediaURLsStep) inlineSizeExceeded(b64, modality string) bool {
 }
 
 // enforceInlineSize reports whether the per-modality cap is applied to a data
-// URI in a URL slot, whose bytes arrive in the request body instead of over
-// the network.
+// URI in a URL slot, whose bytes arrive in the request body instead of over the
+// network. Audio and video always, so the cap holds however the payload arrived.
 //
-// Audio and video are enforced so the per-modality cap holds however the
-// payload arrived. coordinator.yaml's max_download_size comment records the
-// memory bound these caps set. input_audio is only ever inline and is capped by
-// validateInlineAudio, so enforcing here keeps the two ways of sending the same
-// audio in agreement.
-//
-// Images are exempt, on the same grounds as their exemption from the
-// download-path Content-Type check in enforceDownloadContentType.
-// server.max_request_body_size is what bounds an image data URI.
+// Image only when max_image_download_size is set, mirroring how
+// enforceDownloadContentType opts in on allowed_image_content_types: falling
+// back to max_download_size would start rejecting data URIs that every config
+// setting it has always accepted. Unset leaves server.max_request_body_size the
+// bound.
 func (s *ReplaceMediaURLsStep) enforceInlineSize(modality string) bool {
-	return modality != ModalityImage
+	if modality != ModalityImage {
+		return true
+	}
+	_, explicit := s.maxDownloadSizeByMod[ModalityImage]
+	return explicit
 }
 
 // base64LenForBytes returns the padded-base64 encoded length of a sizeCap-byte

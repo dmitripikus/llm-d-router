@@ -165,8 +165,10 @@ pipeline:
         #
         # Which payloads each cap covers differs by modality:
         #
-        #   image  http(s) downloads only. An image data: URI is not
-        #          size-checked; server.max_request_body_size bounds it.
+        #   image  http(s) downloads only, when the cap comes from this global
+        #          value. An image data: URI is then not size-checked and
+        #          server.max_request_body_size bounds it. Setting
+        #          max_image_download_size covers data: URIs as well.
         #   audio  http(s) downloads, audio_url data: URIs, and input_audio
         #          inline payloads.
         #   video  http(s) downloads and video_url data: URIs.
@@ -177,6 +179,12 @@ pipeline:
 
         # max_image_download_size overrides max_download_size for image_url
         # items. Same units (MB), same overflow validation.
+        #
+        # Setting it also widens what the image cap covers: it bounds image
+        # data: URIs, which the global max_download_size never does. Leaving it
+        # unset is what keeps a data URI unchecked, so a config that has always
+        # set only max_download_size keeps accepting the bodies it accepts
+        # today. Set this to bound the memory an inline image can take.
         # max_image_download_size: 10
 
         # max_audio_download_size overrides max_download_size for audio_url

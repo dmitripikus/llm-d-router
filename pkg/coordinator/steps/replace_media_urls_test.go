@@ -1930,10 +1930,12 @@ func TestReplaceMediaURLsStep_AudioDataURI_UsesAudioCap(t *testing.T) {
 	}
 }
 
-// TestReplaceMediaURLsStep_ImageDataURI_ExemptFromSizeCap pins the deliberate
-// exemption in enforceInlineSize: an image data URI is bounded by the server's
-// max_request_body_size, not by the per-modality download cap.
-func TestReplaceMediaURLsStep_ImageDataURI_ExemptFromSizeCap(t *testing.T) {
+// TestReplaceMediaURLsStep_ImageDataURI_ExemptFromGlobalCap pins the default in
+// enforceInlineSize: with no max_image_download_size set, an image data URI is
+// bounded by the server's max_request_body_size and not by max_download_size.
+// This is the pre-existing behavior every deployment that sets max_download_size
+// relies on, so the fallback must not reach a data URI.
+func TestReplaceMediaURLsStep_ImageDataURI_ExemptFromGlobalCap(t *testing.T) {
 	oversized := strings.Repeat("A", 2*1024*1024)
 	step, err := NewReplaceMediaURLsStep(nil, map[string]any{"max_download_size": 1})
 	if err != nil {
@@ -1941,10 +1943,37 @@ func TestReplaceMediaURLsStep_ImageDataURI_ExemptFromSizeCap(t *testing.T) {
 	}
 	reqCtx := dataURIReqCtx("image_url", testImagePNGMIME, oversized)
 	if err := step.Execute(context.Background(), reqCtx); err != nil {
-		t.Fatalf("image data URI must stay exempt from the size cap, got %v", err)
+		t.Fatalf("image data URI must stay exempt from the global cap, got %v", err)
 	}
 	if len(reqCtx.MultimodalEntries) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(reqCtx.MultimodalEntries))
+	}
+}
+
+// TestReplaceMediaURLsStep_ImageDataURI_HonorsExplicitImageCap is the other half
+// of the pair above: setting max_image_download_size is an explicit request to
+// bound image payloads, so it reaches a data URI too and not only the download
+// path. An operator setting it to bound memory would expect nothing less.
+func TestReplaceMediaURLsStep_ImageDataURI_HonorsExplicitImageCap(t *testing.T) {
+	step, err := NewReplaceMediaURLsStep(nil, map[string]any{"max_image_download_size": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 2 MB of base64 against a 1 MB image cap.
+	oversized := dataURIReqCtx("image_url", testImagePNGMIME, strings.Repeat("A", 2*1024*1024))
+	err = step.Execute(context.Background(), oversized)
+	if err == nil || !errors.Is(err, pipeline.ErrBadRequest) {
+		t.Fatalf("expected ErrBadRequest for an image data URI over an explicit 1 MB cap, got %v", err)
+	}
+
+	// A payload inside the same cap still goes through.
+	small := dataURIReqCtx("image_url", testImagePNGMIME, strings.Repeat("A", 1024))
+	if err := step.Execute(context.Background(), small); err != nil {
+		t.Fatalf("payload within the explicit cap must be accepted, got %v", err)
+	}
+	if len(small.MultimodalEntries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(small.MultimodalEntries))
 	}
 }
 
