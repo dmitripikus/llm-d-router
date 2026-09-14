@@ -734,6 +734,7 @@ only the request carrier differs.
 
 | `type` | Purpose | Key params |
 | :---- | :---- | :---- |
+| `async-broker` | Optional, first when enabled. Bridge to the [llm-d-async](https://github.com/llm-d/llm-d-async) broker: requests carrying the mode header are labeled and passed through (`passthrough`) or queued (`enqueue`, `wait`); requests without it are untouched. Also registers `GET/DELETE /v1/requests/{id}` on the listener. Full doc: [coordinator_async_broker.md](coordinator_async_broker.md). | `redis_url` (required), `routes`, `objectives`, `quota`, `wait_cap_seconds` |
 | `replace-media-urls` | Download `image_url`, `audio_url`, and `video_url` references and accept inline `input_audio`, inline each as a base64 `data:` URI, seed one `MultimodalEntries` item per part tagged with its modality. | `download_timeout`, `max_concurrent_downloads`, `max_multimodal_entries`, `max_download_size`, `max_image_download_size`, `max_audio_download_size`, `max_video_download_size`, `allowed_image_content_types`, `allowed_audio_content_types`, `allowed_video_content_types`, `allow_private_networks`, `allowed_domains` |
 | `render` | Tokenize via the render service; populate `TokenIDs` and each entry's hash/placeholder/kwargs from the per-modality `mm_hashes` / `mm_placeholders` / `kwargs_data` maps. | `address` (required), `timeout`, `max_total_tokens`, `max_total_placeholder_tokens` |
 | `conditional-decode` | Optional fast path: attempt decode with `Prefer: if-available`; on 412 continue, otherwise stream the response and stop. | (none) |

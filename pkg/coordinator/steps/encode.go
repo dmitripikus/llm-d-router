@@ -99,7 +99,7 @@ func (s *EncodeStep) Execute(ctx context.Context, reqCtx *pipeline.RequestContex
 	// take this path), so the encode fanout and EC handoff would be redundant.
 	// Skipping avoids shipping the preprocessed tensor a second time
 	// (see https://github.com/vllm-project/vllm/issues/46722).
-	if reqCtx.OriginalPath == gateway.DefaultGeneratePath {
+	if reqcommon.DetectAPIType(reqCtx.OriginalPath) == reqcommon.APITypeGenerate {
 		logger.V(logutil.DEFAULT).Info("skipping encode for generate request")
 		return nil
 	}
@@ -111,7 +111,7 @@ func (s *EncodeStep) Execute(ctx context.Context, reqCtx *pipeline.RequestContex
 
 	format := resolveFormat(s.useOpenAIFormat, reqCtx.OriginalPath)
 	var partsByMod map[string][]map[string]any
-	if format == gateway.FormatChatCompletions {
+	if format == reqcommon.APITypeChatCompletions {
 		partsByMod = collectMediaParts(reqCtx.Body)
 	}
 
@@ -149,7 +149,7 @@ func (s *EncodeStep) Execute(ctx context.Context, reqCtx *pipeline.RequestContex
 				return err
 			}
 
-			path := gateway.PathForFormat(format)
+			path := format.Path()
 			logger.V(logutil.DEFAULT).Info("sending sub-request", "index", i, "path", path)
 
 			headers := reqCtx.ForwardedHeaders()
@@ -226,10 +226,10 @@ func (s *EncodeStep) buildEncodeTokenIDs(fullTokenIDs []int, entry pipeline.Mult
 // buildEncodeBody builds one fanout sub-request. mod and localIdx are the
 // entry's pairing coordinates, both resolved by Execute: mod is the entry's
 // modality, localIdx its position among the entries sharing that modality.
-func (s *EncodeStep) buildEncodeBody(reqCtx *pipeline.RequestContext, tokenIDs []int, entry pipeline.MultimodalEntry, mod string, localIdx int, format gateway.RequestFormat, partsByMod map[string][]map[string]any) (map[string]any, error) {
+func (s *EncodeStep) buildEncodeBody(reqCtx *pipeline.RequestContext, tokenIDs []int, entry pipeline.MultimodalEntry, mod string, localIdx int, format reqcommon.APIType, partsByMod map[string][]map[string]any) (map[string]any, error) {
 	placeholder := map[string]any{"offset": 1, "length": entry.Placeholder.Length}
 	switch format {
-	case gateway.FormatChatCompletions:
+	case reqcommon.APITypeChatCompletions:
 		mediaContent, err := buildSingleMediaContent(partsByMod, mod, localIdx)
 		if err != nil {
 			return nil, err
@@ -250,7 +250,7 @@ func (s *EncodeStep) buildEncodeBody(reqCtx *pipeline.RequestContext, tokenIDs [
 				},
 			},
 		}
-		capSingleTokenOutput(body, format)
+		reqcommon.CapSingleToken(body, format)
 		return body, nil
 	default:
 		body := map[string]any{
@@ -262,7 +262,7 @@ func (s *EncodeStep) buildEncodeBody(reqCtx *pipeline.RequestContext, tokenIDs [
 				"kwargs_data":     singleEntryKwargs(mod, entry.KwargsData),
 			},
 		}
-		capSingleTokenOutput(body, format)
+		reqcommon.CapSingleToken(body, format)
 		return body, nil
 	}
 }

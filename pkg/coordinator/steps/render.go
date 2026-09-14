@@ -24,12 +24,12 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	logutil "github.com/llm-d/llm-d-router/pkg/common/observability/logging"
+	reqcommon "github.com/llm-d/llm-d-router/pkg/common/request"
 
 	"github.com/llm-d/llm-d-router/pkg/coordinator/gateway"
 	coordmetrics "github.com/llm-d/llm-d-router/pkg/coordinator/metrics"
@@ -130,17 +130,19 @@ func (s *RenderStep) Execute(ctx context.Context, reqCtx *pipeline.RequestContex
 	if err := validateEntryModalities(reqCtx.MultimodalEntries); err != nil {
 		return fmt.Errorf("render: %w", err)
 	}
-	if reqCtx.OriginalPath == gateway.DefaultGeneratePath {
+	switch reqcommon.DetectAPIType(reqCtx.OriginalPath) {
+	case reqcommon.APITypeGenerate:
 		return s.executeGenerate(ctx, reqCtx)
-	}
-	if strings.Contains(reqCtx.OriginalPath, gateway.PathCompletions) {
+	case reqcommon.APITypeCompletions:
 		return s.executeCompletions(ctx, reqCtx)
-	} else if strings.Contains(reqCtx.OriginalPath, gateway.PathChatCompletions) {
+	case reqcommon.APITypeChatCompletions:
 		return s.executeChatCompletions(ctx, reqCtx)
+	default:
+		// Other APIs, such as Responses, carry no token_ids to normalize.
+		logger := log.FromContext(ctx).WithName(RenderStepName)
+		logger.V(logutil.DEFAULT).Info("skipping render step", "path", reqCtx.OriginalPath)
+		return nil
 	}
-	logger := log.FromContext(ctx).WithName(RenderStepName)
-	logger.V(logutil.DEFAULT).Info("skipping render step", "path", reqCtx.OriginalPath)
-	return nil
 }
 
 // executeGenerate handles the tokens-in generate path. It does not tokenize:
@@ -207,7 +209,7 @@ func (s *RenderStep) executeCompletions(ctx context.Context, reqCtx *pipeline.Re
 		// decode into a minimal struct so completions stays decoupled from the
 		// chat-completions response shape.
 		var renderResp []completionsRenderResponse
-		if err := s.postRender(ctx, reqCtx, gateway.PathCompletions, &renderResp); err != nil {
+		if err := s.postRender(ctx, reqCtx, reqcommon.PathCompletions, &renderResp); err != nil {
 			return err
 		}
 		if len(renderResp) != 1 {
@@ -267,7 +269,7 @@ func (s *RenderStep) executeChatCompletions(ctx context.Context, reqCtx *pipelin
 	logger := log.FromContext(ctx).WithName(RenderStepName)
 
 	var renderResp renderResponse
-	if err := s.postRender(ctx, reqCtx, gateway.PathChatCompletions, &renderResp); err != nil {
+	if err := s.postRender(ctx, reqCtx, reqcommon.PathChatCompletions, &renderResp); err != nil {
 		return err
 	}
 

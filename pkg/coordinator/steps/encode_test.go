@@ -28,6 +28,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	reqcommon "github.com/llm-d/llm-d-router/pkg/common/request"
 	"github.com/llm-d/llm-d-router/pkg/coordinator/config"
 	"github.com/llm-d/llm-d-router/pkg/coordinator/connectors/ec"
 	"github.com/llm-d/llm-d-router/pkg/coordinator/gateway"
@@ -278,7 +279,7 @@ func TestEncodeStep_ChatCompletionsFormat(t *testing.T) {
 
 	reqCtx := &pipeline.RequestContext{
 		RequestID:    "req-chat",
-		OriginalPath: gateway.PathChatCompletions,
+		OriginalPath: reqcommon.PathChatCompletions,
 		Model:        testModelName,
 		TokenIDs:     []int{1, 32000, 32000, 32000, 2345},
 		Body: map[string]any{
@@ -354,11 +355,12 @@ func TestEncodeStep_ChatCompletionsFormat(t *testing.T) {
 	}
 }
 
-// TestEncodeStep_ChatCompletionsFormat_CapsMaxCompletionTokens is a
-// The encode chat sub-request is built fresh from the request context and does
-// not carry the client's sampling fields, so max_completion_tokens is not
-// propagated and is never injected: max_tokens=1 alone caps output.
-func TestEncodeStep_ChatCompletionsFormat_OmitsMaxCompletionTokens(t *testing.T) {
+// TestEncodeStep_ChatCompletionsFormat_CapsMaxCompletionTokens verifies the
+// encode chat sub-request carries max_completion_tokens=1 unconditionally
+// (via reqcommon.CapSingleToken), even though the
+// sub-request is built fresh from the request context and never copies the
+// client's own max_completion_tokens value.
+func TestEncodeStep_ChatCompletionsFormat_CapsMaxCompletionTokens(t *testing.T) {
 	var receivedBody map[string]any
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -380,7 +382,7 @@ func TestEncodeStep_ChatCompletionsFormat_OmitsMaxCompletionTokens(t *testing.T)
 
 	reqCtx := &pipeline.RequestContext{
 		RequestID:    "req-chat-max-completion-tokens",
-		OriginalPath: gateway.PathChatCompletions,
+		OriginalPath: reqcommon.PathChatCompletions,
 		Model:        testModelName,
 		TokenIDs:     []int{1, 32000, 32000, 32000, 2345},
 		Body: map[string]any{
@@ -407,8 +409,8 @@ func TestEncodeStep_ChatCompletionsFormat_OmitsMaxCompletionTokens(t *testing.T)
 	if receivedBody["max_tokens"] != float64(1) {
 		t.Fatalf("expected encode sub-request max_tokens capped to 1, got %v", receivedBody["max_tokens"])
 	}
-	if _, ok := receivedBody["max_completion_tokens"]; ok {
-		t.Fatalf("expected encode sub-request to omit max_completion_tokens, got %v", receivedBody["max_completion_tokens"])
+	if receivedBody["max_completion_tokens"] != float64(1) {
+		t.Fatalf("expected encode sub-request max_completion_tokens capped to 1, got %v", receivedBody["max_completion_tokens"])
 	}
 }
 
@@ -452,37 +454,44 @@ func TestEncodeStep_TextOnly(t *testing.T) {
 // multimodal entries are present: the prefill worker runs the vision encoder
 // inline, so the encode fan-out and EC handoff are skipped.
 func TestEncodeStep_SkipsForGenerate(t *testing.T) {
-	gatewayCallCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gatewayCallCount++
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
+	for name, path := range map[string]string{
+		"exact path":    reqcommon.PathGenerate,
+		"prefixed path": "/prefix" + reqcommon.PathGenerate,
+	} {
+		t.Run(name, func(t *testing.T) {
+			gatewayCallCount := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gatewayCallCount++
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
 
-	gwClient := gateway.New(config.GatewayConfig{Address: server.URL})
-	step, err := NewEncodeStep(gwClient, map[string]any{ParamECConnector: ec.NIXL})
-	if err != nil {
-		t.Fatal(err)
-	}
+			gwClient := gateway.New(config.GatewayConfig{Address: server.URL})
+			step, err := NewEncodeStep(gwClient, map[string]any{ParamECConnector: ec.NIXL})
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	reqCtx := &pipeline.RequestContext{
-		RequestID:    "req-generate",
-		Model:        "test-model",
-		OriginalPath: gateway.DefaultGeneratePath,
-		TokenIDs:     []int{1, 32000, 32000, 2},
-		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "hash-a", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 2}},
-		},
-	}
+			reqCtx := &pipeline.RequestContext{
+				RequestID:    "req-generate",
+				Model:        "test-model",
+				OriginalPath: path,
+				TokenIDs:     []int{1, 32000, 32000, 2},
+				MultimodalEntries: []pipeline.MultimodalEntry{
+					{Modality: ModalityImage, Hash: "hash-a", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 2}},
+				},
+			}
 
-	if err := step.Execute(context.Background(), reqCtx); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if gatewayCallCount != 0 {
-		t.Fatalf("expected no gateway calls for generate request, got %d", gatewayCallCount)
-	}
-	if reqCtx.ECTransferParams != nil {
-		t.Fatalf("expected nil ECTransferParams for generate request, got %v", reqCtx.ECTransferParams)
+			if err := step.Execute(context.Background(), reqCtx); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if gatewayCallCount != 0 {
+				t.Fatalf("expected no gateway calls for generate request, got %d", gatewayCallCount)
+			}
+			if reqCtx.ECTransferParams != nil {
+				t.Fatalf("expected nil ECTransferParams for generate request, got %v", reqCtx.ECTransferParams)
+			}
+		})
 	}
 }
 
@@ -583,9 +592,9 @@ func TestEncodeStep_BuildsCorrectTokenIDs(t *testing.T) {
 }
 
 // TestEncodeStep_GenerateFormat_CapsSingleToken verifies the generate-format
-// encoder sub-request caps output to a single token: sampling_params carries
-// max_tokens=1 and strips min_tokens (it defaults to 0, keeping min_tokens <=
-// max_tokens).
+// encoder sub-request carries sampling_params.max_tokens=1. The sub-request is
+// built from RequestContext, so the min_tokens check guards against the step
+// starting to forward client sampling_params.
 func TestEncodeStep_GenerateFormat_CapsSingleToken(t *testing.T) {
 	var samplingParams map[string]any
 
@@ -812,7 +821,7 @@ func TestEncodeStep_MissingMediaPartFails(t *testing.T) {
 	reqCtx := &pipeline.RequestContext{
 		RequestID:    "missing-part",
 		Model:        "llama-3",
-		OriginalPath: gateway.PathChatCompletions,
+		OriginalPath: reqcommon.PathChatCompletions,
 		TokenIDs:     []int{1, 32000, 2345},
 		Body: map[string]any{
 			"messages": []any{
@@ -961,7 +970,7 @@ func TestEncodeStep_MixedModalityFanout(t *testing.T) {
 	reqCtx := &pipeline.RequestContext{
 		RequestID:    "mixed-fanout",
 		Model:        "llama-3",
-		OriginalPath: gateway.PathChatCompletions,
+		OriginalPath: reqcommon.PathChatCompletions,
 		TokenIDs:     []int{1, 32000, 32000, 32000, 2345},
 		Body: map[string]any{
 			"model":  "llama-3",
@@ -1002,7 +1011,7 @@ func TestEncodeStep_WithinModalityFanoutPairing(t *testing.T) {
 	reqCtx := &pipeline.RequestContext{
 		RequestID:    "within-modality-fanout",
 		Model:        "llama-3",
-		OriginalPath: gateway.PathChatCompletions,
+		OriginalPath: reqcommon.PathChatCompletions,
 		TokenIDs:     []int{1, 32000, 32000, 32000, 2345},
 		Body: map[string]any{
 			"model":  "llama-3",
