@@ -1043,3 +1043,45 @@ func TestEncodeStep_WithinModalityFanoutPairing(t *testing.T) {
 		{modality: ModalityAudio, hash: "aud-url-hash", partType: "audio_url", payload: "data:audio/wav;base64,URL-AUD"},
 	})
 }
+
+// TestEncodeStep_EntryWithoutModalityFails is the encode counterpart of
+// TestPrefillStep_EntryWithoutModalityFails: it covers the validateEntryModalities
+// guard at this step's boundary, not the guard itself (utils_test.go does that).
+//
+// The generate format is deliberate. It takes the fanout down the branch that
+// needs no media part from the body, so without the guard the untagged entry
+// would be sent to the encoder under an empty mm_hashes key rather than stopped
+// by a later pairing failure. The upstream handler fails the test if it runs.
+func TestEncodeStep_EntryWithoutModalityFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("encode must not reach the upstream with an untagged entry")
+	}))
+	defer server.Close()
+
+	step, err := NewEncodeStep(gateway.New(config.GatewayConfig{Address: server.URL}), map[string]any{
+		"use_openai_format": false,
+		ParamECConnector:    ec.NIXL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reqCtx := &pipeline.RequestContext{
+		RequestID:    "req-1",
+		OriginalPath: reqcommon.PathChatCompletions,
+		Model:        "test-model",
+		TokenIDs:     []int{1, 32000, 2345},
+		MultimodalEntries: []pipeline.MultimodalEntry{
+			{Hash: "hash-a", KwargsData: "dDE=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
+		},
+	}
+
+	err = step.Execute(context.Background(), reqCtx)
+	if err == nil {
+		t.Fatal("expected an error for an entry with no modality")
+	}
+	// A coordinator-side invariant break, so a 5xx rather than blaming the client.
+	if errors.Is(err, pipeline.ErrBadRequest) {
+		t.Errorf("expected a non-ErrBadRequest failure, got %v", err)
+	}
+}

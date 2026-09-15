@@ -998,3 +998,47 @@ func TestRenderStep_GenerateFormat_MissingTokenIDs(t *testing.T) {
 		t.Errorf("expected ErrBadRequest, got %v", err)
 	}
 }
+
+// TestRenderStep_EntryWithoutModalityFails is the render counterpart of
+// TestPrefillStep_EntryWithoutModalityFails: it covers the validateEntryModalities
+// guard at this step's boundary, not the guard itself (utils_test.go does that).
+//
+// The chat-completions path is the one that matters here. Its entries arrive from
+// replace_media_urls, and render fills each one from the response slot for its
+// Modality, so an untagged entry would look for a slot under the empty key. On the
+// generate path render builds the entries itself and extractMultimodalEntries
+// rejects an empty modality key as a client error before this guard is reachable.
+//
+// The render service fails the test if it is called: the guard has to reject
+// before the upstream request, not after.
+func TestRenderStep_EntryWithoutModalityFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("render must not reach the rendering service with an untagged entry")
+	}))
+	defer server.Close()
+
+	step, err := NewRenderStep(nil, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	step.(*RenderStep).SetServiceAddress(server.URL)
+
+	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathChatCompletions,
+		Model:        "test-model",
+		Body:         map[string]any{"model": "test-model", "messages": []any{}},
+		MultimodalEntries: []pipeline.MultimodalEntry{
+			{Modality: ModalityImage},
+			{},
+		},
+	}
+
+	err = step.Execute(context.Background(), reqCtx)
+	if err == nil {
+		t.Fatal("expected an error for an entry with no modality")
+	}
+	// A coordinator-side invariant break, so a 5xx rather than blaming the client.
+	if errors.Is(err, pipeline.ErrBadRequest) {
+		t.Errorf("expected a non-ErrBadRequest failure, got %v", err)
+	}
+}
