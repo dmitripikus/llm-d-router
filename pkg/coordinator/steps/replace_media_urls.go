@@ -317,7 +317,13 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 			}
 			ref, ok, reason := classifyMediaPart(partMap, partType, modality)
 			if !ok {
-				logger.V(logutil.DEBUG).Info("skipping malformed media part",
+				// DEFAULT, not DEBUG: the part is passed through untouched and
+				// the request still succeeds, so this line is the only signal
+				// that a client's media part was not downloaded. It has to be
+				// visible without raising verbosity. Not bare Info (V(0)),
+				// which would make a skipped part louder than the step's own
+				// completion log.
+				logger.V(logutil.DEFAULT).Info("skipping malformed media part",
 					"reason", reason, "msg_index", msgIdx, "part_index", partIdx, "part_type", partType)
 				continue
 			}
