@@ -282,7 +282,15 @@ pipeline:
         # allowed_audio_content_types overrides the built-in audio MIME
         # allowlist. Applies to audio_url data URIs, to the Content-Type an
         # http(s) audio_url origin returns, and to input_audio parts. Unlike
-        # image, the download path is checked whether or not this param is set.
+        # image, the download path is checked whether or not this param is set
+        # -- including against S3/GCS/presigned-URL origins, which serve every
+        # object as application/octet-stream by default. If audio downloads
+        # from such an origin are rejected as "content type not allowed",
+        # either set this to an empty list to accept any type, or add
+        # application/octet-stream to the list explicitly. It is deliberately
+        # not in the default list: an origin that declares nothing useful and
+        # an origin that is actively lying send the identical header, so
+        # defaulting to accept it would accept any file type for audio.
         # Default: audio/wav, audio/x-wav, audio/mpeg, audio/mp3, audio/flac,
         # audio/x-flac, audio/ogg, audio/opus, audio/webm.
         #
@@ -301,7 +309,13 @@ pipeline:
         # allowed_video_content_types overrides the built-in video MIME
         # allowlist. Applies to video_url data URIs and to the Content-Type an
         # http(s) video_url origin returns; as with audio, the download path is
-        # checked whether or not this param is set.
+        # checked whether or not this param is set -- including against
+        # S3/GCS/presigned-URL origins, which serve every object as
+        # application/octet-stream by default. If video downloads from such an
+        # origin are rejected as "content type not allowed", either set this to
+        # an empty list to accept any type, or add application/octet-stream to
+        # the list explicitly; see allowed_audio_content_types for why it is
+        # not in the default list.
         # Default: video/mp4, video/webm, video/quicktime, video/mpeg, video/ogg.
         # allowed_video_content_types:
         #   - video/mp4
