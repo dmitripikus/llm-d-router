@@ -1,5 +1,6 @@
 /*
 Copyright 2026 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -351,6 +352,7 @@ func TestInFlightLoadProducer_DeleteEndpointPrunesOnlyMatchingMetricSeries(t *te
 	})
 	require.NoError(t, err)
 
+	//#nosec G101 -- metric name, not a credential
 	expectedTokens := `
 # HELP llm_d_epp_inflight_tokens [ALPHA] Current number of in-flight tokens per endpoint (uncached prompt tokens, optionally plus estimated output), as tracked by the in-flight load producer.
 # TYPE llm_d_epp_inflight_tokens gauge

@@ -131,7 +131,7 @@ func (s *RenderStep) Execute(ctx context.Context, reqCtx *pipeline.RequestContex
 		return fmt.Errorf("render: %w", err)
 	}
 	switch reqcommon.DetectAPIType(reqCtx.OriginalPath) {
-	case reqcommon.APITypeGenerate:
+	case reqcommon.APITypeVLLMGenerate:
 		return s.executeGenerate(ctx, reqCtx)
 	case reqcommon.APITypeCompletions:
 		return s.executeCompletions(ctx, reqCtx)
@@ -164,8 +164,10 @@ func (s *RenderStep) executeGenerate(ctx context.Context, reqCtx *pipeline.Reque
 	}
 	reqCtx.TokenIDs = tokenIDs
 
-	if err := validateSamplingParams(reqCtx.Body); err != nil {
-		return fmt.Errorf("render: %w", err)
+	if rawSampling := reqCtx.Body["sampling_params"]; rawSampling != nil {
+		if _, ok := rawSampling.(map[string]any); !ok {
+			return fmt.Errorf("render: sampling_params must be an object, got %T: %w", rawSampling, pipeline.ErrBadRequest)
+		}
 	}
 
 	rawFeatures := reqCtx.Body["features"]
@@ -371,6 +373,7 @@ func (s *RenderStep) postRender(ctx context.Context, reqCtx *pipeline.RequestCon
 		respBody := readErrorBody(resp.Body)
 		return upstreamError(RenderStepName, resp.StatusCode, respBody)
 	}
+	reqCtx.CaptureResponseHeaders(resp.Header)
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 		return fmt.Errorf("decoding render response: %w", err)
 	}

@@ -1,5 +1,6 @@
 /*
 Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -236,10 +237,7 @@ func getEngineTypeFromEndpoint(ep fwkdl.Endpoint, labelKey string) string {
 
 	engineType, ok := meta.Labels[labelKey]
 	if !ok || engineType == "" {
-		engineType, ok = meta.Labels[legacyGAIEEngineTypeLabelKey]
-		if !ok || engineType == "" {
-			return DefaultEngineType
-		}
+		return DefaultEngineType
 	}
 
 	return engineType

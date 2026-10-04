@@ -1,5 +1,6 @@
 /*
 Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,16 +19,23 @@ package handlers
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	configPb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
+	grpcmetadata "google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/llm-d/llm-d-router/pkg/common/observability/tracing"
+	"github.com/llm-d/llm-d-router/pkg/common/routing"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/interface/datalayer"
 	"github.com/llm-d/llm-d-router/pkg/epp/metadata"
 )
@@ -94,6 +102,26 @@ func TestExtractTraceContext(t *testing.T) {
 	}
 }
 
+func TestExtractTraceContextPrefersHTTPHeadersOverGRPCMetadata(t *testing.T) {
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+
+	const (
+		metadataTraceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0c9902b7-01"
+		headerTraceparent   = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+	)
+	ctx := grpcmetadata.NewIncomingContext(context.Background(), grpcmetadata.Pairs("traceparent", metadataTraceparent))
+	req := &extProcPb.ProcessingRequest_RequestHeaders{
+		RequestHeaders: &extProcPb.HttpHeaders{
+			Headers: &configPb.HeaderMap{Headers: []*configPb.HeaderValue{{Key: "traceparent", Value: headerTraceparent}}},
+		},
+	}
+
+	sc := trace.SpanContextFromContext(extractTraceContext(ctx, req))
+
+	assert.True(t, sc.IsValid())
+	assert.Equal(t, "0af7651916cd43dd8448eb211c80319c", sc.TraceID().String())
+}
+
 func TestHandleRequestHeaders(t *testing.T) {
 	t.Parallel()
 
@@ -101,6 +129,7 @@ func TestHandleRequestHeaders(t *testing.T) {
 		name          string
 		headers       []*configPb.HeaderValue
 		wantHeaders   map[string]string
+		wantAbsent    []string
 		wantObjective string
 		wantTarget    string
 	}{
@@ -129,6 +158,23 @@ func TestHandleRequestHeaders(t *testing.T) {
 			wantObjective: "new-objective",
 			wantTarget:    "new-model",
 		},
+		{
+			name: "Drops client-supplied routing headers",
+			headers: []*configPb.HeaderValue{
+				{Key: "X-Prefiller-Host-Port", Value: "10.0.0.1:9090"},
+				{Key: routing.EncoderEndpointsHeader, Value: "10.0.0.2:9090"},
+				{Key: routing.DataParallelEndpointHeader, Value: "10.0.0.3:9090"},
+				{Key: routing.KVCacheSourceHeader, Value: "10.0.0.4:9090"},
+				{Key: "x-test", Value: "val"},
+			},
+			wantHeaders: map[string]string{"x-test": "val"},
+			wantAbsent: []string{
+				routing.PrefillEndpointHeader,
+				routing.EncoderEndpointsHeader,
+				routing.DataParallelEndpointHeader,
+				routing.KVCacheSourceHeader,
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -154,8 +200,88 @@ func TestHandleRequestHeaders(t *testing.T) {
 					assert.Equal(t, v, reqCtx.Request.Headers[k], "Header %q should match expected value", k)
 				}
 			}
+			for _, k := range tc.wantAbsent {
+				assert.NotContains(t, reqCtx.Request.Headers, k)
+			}
 		})
 	}
+}
+
+// generateHeaders must inject W3C trace context for Envoy to forward to vLLM,
+// and must not re-forward a client-supplied traceparent after injection.
+func TestGenerateHeaders_InjectsTraceContext(t *testing.T) {
+	useTracerProvider(t, sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample())))
+
+	const clientTraceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+
+	tracer := tracing.Tracer("test")
+	ctx, span := tracer.Start(context.Background(), "request", trace.WithSpanKind(trace.SpanKindServer))
+	defer span.End()
+
+	server := &StreamingServer{}
+	reqCtx := &RequestContext{
+		TargetEndpoint: "1.2.3.4:8080",
+		Request: &Request{
+			Headers: map[string]string{
+				"traceparent": clientTraceparent,
+				"x-user-data": "important",
+			},
+		},
+	}
+
+	results := server.generateHeaders(ctx, reqCtx)
+
+	gotHeaders := make(map[string]string)
+	traceparentCount := 0
+	for _, h := range results {
+		key := strings.ToLower(h.Header.Key)
+		gotHeaders[key] = string(h.Header.RawValue)
+		if key == "traceparent" {
+			traceparentCount++
+		}
+	}
+
+	traceparent := gotHeaders["traceparent"]
+	require.NotEmpty(t, traceparent, "expected traceparent to be injected into outbound headers")
+	require.Equal(t, 1, traceparentCount, "expected exactly one traceparent header")
+	require.Contains(t, traceparent, span.SpanContext().TraceID().String(),
+		"outbound traceparent must carry the active EPP span trace ID")
+	require.NotContains(t, traceparent, "0af7651916cd43dd8448eb211c80319c",
+		"client traceparent must not be re-forwarded after injection")
+	assert.Equal(t, "important", gotHeaders["x-user-data"])
+}
+
+// With tracing disabled the noop tracer keeps the extracted remote span context,
+// so the client's trace headers are forwarded unchanged.
+func TestGenerateHeaders_ForwardsTraceContextWhenTracingDisabled(t *testing.T) {
+	useTracerProvider(t, noop.NewTracerProvider())
+	tracing.InitTextMapPropagator()
+
+	const clientTraceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0c9902b7-01"
+	req := &extProcPb.ProcessingRequest_RequestHeaders{RequestHeaders: &extProcPb.HttpHeaders{
+		Headers: &configPb.HeaderMap{Headers: []*configPb.HeaderValue{
+			{Key: "traceparent", RawValue: []byte(clientTraceparent)},
+			{Key: "tracestate", RawValue: []byte("vendor=abc")},
+		}},
+	}}
+	ctx := extractTraceContext(context.Background(), req)
+	ctx, span := tracing.Tracer("test").Start(ctx, "request", trace.WithSpanKind(trace.SpanKindServer))
+	defer span.End()
+
+	server := &StreamingServer{}
+	reqCtx := &RequestContext{
+		TargetEndpoint: "1.2.3.4:8080",
+		Request: &Request{Headers: map[string]string{
+			"traceparent": clientTraceparent,
+			"tracestate":  "vendor=abc",
+		}},
+	}
+	got := map[string]string{}
+	for _, h := range server.generateHeaders(ctx, reqCtx) {
+		got[strings.ToLower(h.Header.Key)] = string(h.Header.RawValue)
+	}
+	assert.Equal(t, clientTraceparent, got["traceparent"])
+	assert.Equal(t, "vendor=abc", got["tracestate"])
 }
 
 func TestGenerateHeaders_Sanitization(t *testing.T) {
@@ -170,6 +296,7 @@ func TestGenerateHeaders_Sanitization(t *testing.T) {
 				metadata.OldObjectiveKey:        "old-sensitive-objective-id", // should be stripped
 				metadata.DestinationEndpointKey: "1.1.1.1:666",                // should be stripped
 				"content-length":                "99999",                      // should be stripped (re-added by logic)
+				"traceparent":                   "00-deadbeefdeadbeefdeadbeefdeadbeef-deadbeefdeadbeef-01",
 			},
 		},
 	}
@@ -186,6 +313,7 @@ func TestGenerateHeaders_Sanitization(t *testing.T) {
 	assert.NotContains(t, gotHeaders, metadata.OldObjectiveKey)
 	assert.Equal(t, "1.2.3.4:8080", gotHeaders[metadata.DestinationEndpointKey])
 	assert.Equal(t, "123", gotHeaders["Content-Length"])
+	assert.NotContains(t, gotHeaders, "traceparent")
 }
 
 func TestGenerateRequestHeaderResponse_MergeMetadata(t *testing.T) {
@@ -293,6 +421,63 @@ func TestGenerateRequestHeaderResponse_EndpointScores(t *testing.T) {
 				gotScores[endpoint] = score.GetNumberValue()
 			}
 			assert.Equal(t, tc.wantScores, gotScores, "Unexpected values for DestinationEndpointScoresKey")
+		})
+	}
+}
+
+func TestGenerateRequestHeaderResponse_RemovesUnsetRoutingHeaders(t *testing.T) {
+	t.Parallel()
+
+	allRoutingHeaders := []string{
+		routing.PrefillEndpointHeader,
+		routing.EncoderEndpointsHeader,
+		routing.DataParallelEndpointHeader,
+		routing.KVCacheSourceHeader,
+	}
+
+	tests := []struct {
+		name        string
+		headers     map[string]string
+		wantSet     map[string]string
+		wantRemoved []string
+	}{
+		{
+			name:        "decode-only removes every routing header",
+			headers:     map[string]string{},
+			wantRemoved: allRoutingHeaders,
+		},
+		{
+			name:    "prefill selected sets prefill and removes the rest",
+			headers: map[string]string{routing.PrefillEndpointHeader: "10.0.0.1:8000"},
+			wantSet: map[string]string{routing.PrefillEndpointHeader: "10.0.0.1:8000"},
+			wantRemoved: []string{
+				routing.EncoderEndpointsHeader,
+				routing.DataParallelEndpointHeader,
+				routing.KVCacheSourceHeader,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := &StreamingServer{}
+			reqCtx := &RequestContext{
+				TargetEndpoint: "1.2.3.4:8080",
+				Request:        &Request{Headers: tc.headers},
+				Response:       &Response{},
+			}
+
+			mutation := server.generateRequestHeaderResponse(context.Background(), reqCtx).
+				GetRequestHeaders().GetResponse().GetHeaderMutation()
+
+			gotSet := make(map[string]string)
+			for _, h := range mutation.GetSetHeaders() {
+				gotSet[h.Header.Key] = string(h.Header.RawValue)
+			}
+			for k, v := range tc.wantSet {
+				assert.Equal(t, v, gotSet[k])
+			}
+			assert.ElementsMatch(t, tc.wantRemoved, mutation.GetRemoveHeaders())
 		})
 	}
 }

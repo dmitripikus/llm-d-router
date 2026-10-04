@@ -26,11 +26,12 @@ import (
 
 	reqcommon "github.com/llm-d/llm-d-router/pkg/common/request"
 	"github.com/llm-d/llm-d-router/pkg/common/routing"
+	"github.com/llm-d/llm-d-router/pkg/sidecar/constants"
 )
 
 // NIXL PD composed with the OffloadingConnector P2P tier via vLLM MultiConnector:
 // the sidecar orchestrates PD over NIXL and additionally injects the p2p pull
-// block on the prefill leg, gated by --enable-p2p-pull.
+// block on the prefill request, gated by --enable-p2p-pull.
 var _ = Describe("NIXL Connector with P2P pull", func() {
 
 	var testInfo *sidecarTestInfo
@@ -40,7 +41,7 @@ var _ = Describe("NIXL Connector with P2P pull", func() {
 	const kvCacheSource = "10.9.9.9:8000"
 
 	BeforeEach(func() {
-		testInfo = sidecarConnectionTestSetup(KVConnectorNIXLV2)
+		testInfo = sidecarConnectionTestSetup(constants.KVConnectorNIXLV2)
 		testInfo.proxy.config.P2PConnectorPort = p2pConnectorPort
 		// SSRF allowlist disabled in-test (an enabled one requires a live
 		// InferencePool), so a well-formed source passes.
@@ -85,12 +86,12 @@ var _ = Describe("NIXL Connector with P2P pull", func() {
 	prefillKV := func() map[string]any {
 		reqs := testInfo.prefillHandler.GetCompletionRequests()
 		Expect(reqs).To(HaveLen(1))
-		kv, ok := reqs[0][requestFieldKVTransferParams].(map[string]any)
+		kv, ok := reqs[0][reqcommon.FieldKVTransferParams].(map[string]any)
 		Expect(ok).To(BeTrue())
 		return kv
 	}
 
-	It("composes the p2p pull onto the NIXL prefill leg when --enable-p2p-pull is set", func() {
+	It("composes the p2p pull onto the NIXL prefill request when --enable-p2p-pull is set", func() {
 		testInfo.proxy.config.EnableP2PPull = true
 		proxyBaseAddr := startProxy()
 
@@ -102,14 +103,14 @@ var _ = Describe("NIXL Connector with P2P pull", func() {
 
 		kv := prefillKV()
 		// NIXL fields still drive the NixlConnector under MultiConnector.
-		Expect(kv).To(HaveKeyWithValue(requestFieldDoRemoteDecode, true))
-		Expect(kv).To(HaveKeyWithValue(requestFieldDoRemotePrefill, false))
+		Expect(kv).To(HaveKeyWithValue(reqcommon.FieldDoRemoteDecode, true))
+		Expect(kv).To(HaveKeyWithValue(reqcommon.FieldDoRemotePrefill, false))
 		// The remote_kv_source block drives the OffloadingConnector's cached-prefix pull.
 		p2p, ok := kv[requestFieldRemoteKVSource].(map[string]any)
 		Expect(ok).To(BeTrue())
 		Expect(p2p[requestFieldKVRequestID]).ToNot(BeEmpty())
-		Expect(p2p[requestFieldRemoteHost]).To(Equal("10.9.9.9"))
-		Expect(p2p[requestFieldRemotePort]).To(BeNumerically("==", p2pConnectorPort))
+		Expect(p2p[reqcommon.FieldRemoteHost]).To(Equal("10.9.9.9"))
+		Expect(p2p[reqcommon.FieldRemotePort]).To(BeNumerically("==", p2pConnectorPort))
 	})
 
 	It("ignores the source header on the NIXL path without --enable-p2p-pull", func() {
@@ -137,9 +138,9 @@ var _ = Describe("NIXL Connector with P2P pull", func() {
 		Expect(prefillKV()).ToNot(HaveKey(requestFieldRemoteKVSource))
 	})
 
-	// The parallel-dispatch (MoRI-IO WRITE) path builds the prefill leg in a
+	// The parallel-dispatch (MoRI-IO WRITE) path builds the prefill request in a
 	// separate function, so it has its own p2p injection site.
-	It("composes the p2p pull onto the NIXL prefill leg in parallel-dispatch mode", func() {
+	It("composes the p2p pull onto the NIXL prefill request in parallel-dispatch mode", func() {
 		env := startMoRIProxy(func(c *Config) {
 			c.MoRIIOParallelDispatch = true
 			c.EnableP2PPull = true
@@ -158,12 +159,12 @@ var _ = Describe("NIXL Connector with P2P pull", func() {
 		body, _ := io.ReadAll(resp.Body) //nolint:errcheck
 		Expect(resp.StatusCode).To(Equal(http.StatusOK), string(body))
 
-		// Prefill leg keeps the NIXL WRITE fields and gains the composed remote_kv_source block.
+		// Prefill request keeps the NIXL WRITE fields and gains the composed remote_kv_source block.
 		pkv := kvParams(env.prefillHandler, 0)
-		Expect(pkv).To(HaveKeyWithValue(requestFieldDoRemoteDecode, true))
+		Expect(pkv).To(HaveKeyWithValue(reqcommon.FieldDoRemoteDecode, true))
 		p2p, ok := pkv[requestFieldRemoteKVSource].(map[string]any)
 		Expect(ok).To(BeTrue())
-		Expect(p2p[requestFieldRemoteHost]).To(Equal("10.9.9.9"))
-		Expect(p2p[requestFieldRemotePort]).To(BeNumerically("==", p2pConnectorPort))
+		Expect(p2p[reqcommon.FieldRemoteHost]).To(Equal("10.9.9.9"))
+		Expect(p2p[reqcommon.FieldRemotePort]).To(BeNumerically("==", p2pConnectorPort))
 	})
 })

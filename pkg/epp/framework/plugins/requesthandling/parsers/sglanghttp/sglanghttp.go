@@ -28,9 +28,11 @@ import (
 
 	v1 "sigs.k8s.io/gateway-api-inference-extension/api/v1"
 
+	reqcommon "github.com/llm-d/llm-d-router/pkg/common/request"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/common/request"
 	fwkplugin "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/plugin"
 	fwkrh "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/requesthandling"
+	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requesthandling/parsers"
 )
 
 const (
@@ -39,16 +41,12 @@ const (
 
 	// generatePathSuffix is the SGLang native generate API path.
 	generatePathSuffix = "generate"
-
-	streamingRespPrefix = "data: "
-	streamingDoneMarker = "[DONE]"
-	contentTypeHeader   = "content-type"
-	eventStreamType     = "text/event-stream"
 )
 
 // compile-time type validation
 var (
-	_ fwkrh.Parser = &SGLangHTTPParser{}
+	_ fwkrh.Parser           = &SGLangHTTPParser{}
+	_ fwkrh.PriorityRewriter = &SGLangHTTPParser{}
 )
 
 // SGLangHTTPParser implements fwkrh.Parser for SGLang's native /generate
@@ -133,12 +131,27 @@ func (p *SGLangHTTPParser) parseGenerateRequest(rawBody []byte) (*fwkrh.ParseRes
 		return nil, fmt.Errorf("invalid generate request: %w", err)
 	}
 
+	// Keep the full body as a map so priority can be injected; when nothing is
+	// mutated, repackage still forwards the original bytes unchanged.
+	bodyMap := make(map[string]any)
+	if err := json.Unmarshal(rawBody, &bodyMap); err != nil {
+		return nil, fmt.Errorf("invalid generate request: %w", err)
+	}
+
 	return &fwkrh.ParseResult{Body: &fwkrh.InferenceRequestBody{
 		Generate:        &fwkrh.GenerateRequest{TokenIDs: tokenIDs, CacheSalt: cacheSalt},
-		Payload:         fwkrh.RawPayload(rawBody),
+		Payload:         fwkrh.PayloadMap(bodyMap),
 		MaxOutputTokens: maxOutputTokens(wire.SamplingParams),
 		Stream:          wire.Stream,
 	}, SkipResponseProcessing: false}, nil
+}
+
+// RewritePriority removes any client-supplied priority from the SGLang /generate
+// payload and writes the resolved EPP priority. The director only calls this when
+// priority propagation is enabled; see parsers.RewritePriority for the
+// cross-backend priority semantics.
+func (p *SGLangHTTPParser) RewritePriority(ctx fwkrh.PriorityRewriteContext, payload fwkrh.MarshalablePayload, priority int) (fwkrh.MarshalablePayload, bool, error) {
+	return parsers.RewritePriority(ctx, payload, priority)
 }
 
 func hasJSONValue(data json.RawMessage) bool {
@@ -214,8 +227,8 @@ func (p *SGLangHTTPParser) ParseResponse(_ context.Context, body []byte, headers
 
 func isEventStream(headers map[string]string) bool {
 	for key, value := range headers {
-		if strings.EqualFold(key, contentTypeHeader) &&
-			strings.Contains(strings.ToLower(value), eventStreamType) {
+		if strings.EqualFold(key, request.HeaderContentType) &&
+			strings.Contains(strings.ToLower(value), request.MediaTypeEventStream) {
 			return true
 		}
 	}
@@ -227,12 +240,12 @@ func extractStreamingUsage(body []byte) *fwkrh.Usage {
 	text := strings.TrimSpace(string(body))
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
-		data, ok := strings.CutPrefix(line, streamingRespPrefix)
+		data, ok := strings.CutPrefix(line, reqcommon.SSEDataPrefix)
 		if !ok {
 			continue
 		}
 		data = strings.TrimSpace(data)
-		if data == streamingDoneMarker {
+		if data == reqcommon.SSEDoneMarker {
 			continue
 		}
 		var resp sgLangResponse

@@ -34,6 +34,18 @@ import (
 	"github.com/llm-d/llm-d-router/pkg/common/observability/semconv"
 	"github.com/llm-d/llm-d-router/pkg/common/observability/tracing"
 	reqcommon "github.com/llm-d/llm-d-router/pkg/common/request"
+	"github.com/llm-d/llm-d-router/pkg/sidecar/constants"
+)
+
+// OffloadingConnector kv_transfer_params fields. The role is encoded by the
+// nesting key, named for the remote party it describes: "remote_decoder" on
+// the prefill request, "remote_prefiller" on the decode request, "remote_kv_source"
+// for a symmetric cached-prefix pull.
+const (
+	requestFieldRemoteDecoder   = "remote_decoder"
+	requestFieldRemotePrefiller = "remote_prefiller"
+	requestFieldRemoteKVSource  = "remote_kv_source"
+	requestFieldKVRequestID     = "kv_request_id"
 )
 
 // handleP2P implements the vLLM OffloadingConnector P2P orchestration contract. The
@@ -63,7 +75,7 @@ func (s *Server) handleP2P(w http.ResponseWriter, r *http.Request, prefillPodHos
 		},
 	}
 	s.addP2PPullToPrefill(prefillKVParams, kvCacheSource, prefillPodHostPort)
-	prefillData[requestFieldKVTransferParams] = prefillKVParams
+	prefillData[reqcommon.FieldKVTransferParams] = prefillKVParams
 	reqcommon.CapSingleToken(prefillData, apiType)
 
 	prefillBody, err := json.Marshal(prefillData)
@@ -80,11 +92,11 @@ func (s *Server) handleP2P(w http.ResponseWriter, r *http.Request, prefillPodHos
 	// Decode request: pull KV from the prefiller's OffloadingConnector P2P tier. Original body
 	// (streaming, token limits) is preserved.
 	decodeData := maps.Clone(requestData)
-	decodeData[requestFieldKVTransferParams] = map[string]any{
+	decodeData[reqcommon.FieldKVTransferParams] = map[string]any{
 		requestFieldRemotePrefiller: map[string]any{
-			requestFieldKVRequestID: kvRequestID,
-			requestFieldRemoteHost:  extractHost(prefillPodHostPort),
-			requestFieldRemotePort:  prefillP2PPort,
+			requestFieldKVRequestID:   kvRequestID,
+			reqcommon.FieldRemoteHost: extractHost(prefillPodHostPort),
+			reqcommon.FieldRemotePort: prefillP2PPort,
 		},
 	}
 
@@ -102,7 +114,7 @@ func (s *Server) handleP2P(w http.ResponseWriter, r *http.Request, prefillPodHos
 	s.handleP2PSequentialRequests(w, r, prefillBody, decodeBody, prefillPodHostPort)
 }
 
-// handleP2PSequentialRequests runs the prefill leg to completion, then
+// handleP2PSequentialRequests runs the prefill request to completion, then
 // dispatches decode.
 //
 // The decoder's fetch has to find the prefiller's blocks already stored. A
@@ -110,7 +122,7 @@ func (s *Server) handleP2P(w http.ResponseWriter, r *http.Request, prefillPodHos
 // session and burns the OffloadingConnector's fixed load deadline waiting for
 // KV that has not been produced yet; on expiry the decoder aborts the load and
 // recomputes the prompt locally, which is the work disaggregation exists to
-// avoid. Sequencing the legs also matches the NIXL connector, which forwards to
+// avoid. Sequencing the requests also matches the NIXL connector, which forwards to
 // the prefiller and waits for it to return before dispatching decode.
 func (s *Server) handleP2PSequentialRequests(w http.ResponseWriter, r *http.Request, prefillBody, decodeBody []byte, prefillHost string) {
 	tracer := tracing.Tracer(tracerScope)
@@ -124,13 +136,13 @@ func (s *Server) handleP2PSequentialRequests(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// ---------- Prefill leg: store KV, response discarded ----------
+	// ---------- Prefill request: store KV, response discarded ----------
 	prefillCtx, prefillSpan := tracer.Start(ctx, "prefill",
 		trace.WithSpanKind(trace.SpanKindInternal),
 	)
 	prefillSpan.SetAttributes(
 		semconv.LLMDPDProxyPrefillTarget(prefillHost),
-		semconv.LLMDPDProxyConnector(KVConnectorOffloading),
+		semconv.LLMDPDProxyConnector(constants.KVConnectorOffloading),
 		semconv.LLMDPDProxyPrefillAsync(false),
 	)
 	prefillStart := time.Now()
@@ -148,7 +160,7 @@ func (s *Server) handleP2PSequentialRequests(w http.ResponseWriter, r *http.Requ
 		prefillSpan.SetStatus(codes.Error, "prefill request failed")
 	}
 	prefillSpan.End()
-	s.logger.V(logging.DEBUG).Info("PD Multi Tier prefill leg completed", "status", pw.statusCode)
+	s.logger.V(logging.DEBUG).Info("PD Multi Tier prefill request completed", "status", pw.statusCode)
 
 	if prefillFailed {
 		// Return the prefill error verbatim; decode is never dispatched, so it
@@ -171,13 +183,13 @@ func (s *Server) handleP2PSequentialRequests(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// ---------- Decode leg: pulls the stored KV and streams the response ----------
+	// ---------- Decode request: pulls the stored KV and streams the response ----------
 	decodeCtx, decodeSpan := tracer.Start(ctx, "decode",
 		trace.WithSpanKind(trace.SpanKindInternal),
 	)
 	defer decodeSpan.End()
 	decodeSpan.SetAttributes(
-		semconv.LLMDPDProxyConnector(KVConnectorOffloading),
+		semconv.LLMDPDProxyConnector(constants.KVConnectorOffloading),
 		semconv.LLMDPDProxyDecodeConcurrentWithPrefill(false),
 	)
 	decodeStart := time.Now()
@@ -214,12 +226,12 @@ func (s *Server) handleP2PSequentialRequests(w http.ResponseWriter, r *http.Requ
 // other connector --enable-p2p-pull has no effect, since no MultiConnector
 // routes the remote_kv_source params to an OffloadingConnector.
 func (s *Server) p2pPullAvailable() bool {
-	return s.config.KVConnector == KVConnectorOffloading ||
-		(s.config.EnableP2PPull && s.config.KVConnector == KVConnectorNIXLV2)
+	return s.config.KVConnector == constants.KVConnectorOffloading ||
+		(s.config.EnableP2PPull && s.config.KVConnector == constants.KVConnectorNIXLV2)
 }
 
 // addP2PPullToPrefill adds the OffloadingConnector P2P pull block to a prefill
-// leg's kv_transfer_params so the prefiller pulls cached prefix from
+// request's kv_transfer_params so the prefiller pulls cached prefix from
 // kvCacheSource while keeping its own computed blocks available for the
 // decoder. It is a no-op when no source is set or the source is the selected
 // prefill endpoint, since there is nothing to pull from oneself. The
@@ -261,9 +273,9 @@ func normalizeEndpoint(s string) string {
 // own fresh UUID: in P2P mode it is consumer-side only.
 func (s *Server) p2pSourceParams(sourceHostPort string) map[string]any {
 	return map[string]any{
-		requestFieldKVRequestID: newUUID(),
-		requestFieldRemoteHost:  extractHost(sourceHostPort),
-		requestFieldRemotePort:  s.p2pPortFor(sourceHostPort),
+		requestFieldKVRequestID:   newUUID(),
+		reqcommon.FieldRemoteHost: extractHost(sourceHostPort),
+		reqcommon.FieldRemotePort: s.p2pPortFor(sourceHostPort),
 	}
 }
 
@@ -334,12 +346,12 @@ func (s *Server) decodeWithP2PSource(w http.ResponseWriter, r *http.Request, sou
 	p2pParams := s.p2pSourceParams(source)
 	// Rebuild kv_transfer_params from scratch: the sidecar owns this field, so
 	// client-supplied keys are dropped rather than forwarded to vLLM.
-	requestData[requestFieldKVTransferParams] = map[string]any{requestFieldRemoteKVSource: p2pParams}
+	requestData[reqcommon.FieldKVTransferParams] = map[string]any{requestFieldRemoteKVSource: p2pParams}
 
 	s.logger.Info("running P2P source protocol",
 		"source_host", extractHost(source),
 		"kv_request_id", p2pParams[requestFieldKVRequestID],
-		"p2p_connector_port", p2pParams[requestFieldRemotePort])
+		"p2p_connector_port", p2pParams[reqcommon.FieldRemotePort])
 
 	newBody, err := json.Marshal(requestData)
 	if err != nil {

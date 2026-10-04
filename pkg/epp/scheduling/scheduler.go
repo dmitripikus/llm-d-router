@@ -1,5 +1,6 @@
 /*
 Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -125,7 +126,7 @@ func (s *Scheduler) Schedule(ctx context.Context, request *fwksched.InferenceReq
 	before := time.Now()
 	result, err = s.profileHandler.ProcessResults(ctx, request, profileRunResults)
 	metrics.RecordPluginProcessingLatency(processProfilesResultsExtensionPoint, handlerName.Type, handlerName.Name, time.Since(before))
-	if verboseEnabled {
+	if verboseEnabled && err == nil {
 		loggerVerbose.Info("Completed running profile handler ProcessResults successfully", "plugin", handlerName)
 	}
 

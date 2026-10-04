@@ -1,5 +1,6 @@
 /*
 Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -62,6 +63,8 @@ const (
 	VideoDurationHeaderKey = "x-llm-d-video-duration-seconds"
 	// VideoResolutionHeaderKey is the header key used to specify a request's video frame resolution as "WIDTHxHEIGHT".
 	VideoResolutionHeaderKey = "x-llm-d-video-resolution"
+	// AudioDurationHeaderKey is the header key used to specify a request's audio length in seconds.
+	AudioDurationHeaderKey = "x-llm-d-audio-duration-seconds"
 	// FlowQueueDurationHeaderKey is the response header carrying the time a request spent in flow control admission,
 	// as integer milliseconds. It is absent when flow control did not process the request.
 	FlowQueueDurationHeaderKey = "x-llm-d-flow-queue-duration-ms"

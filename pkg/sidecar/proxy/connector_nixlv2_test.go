@@ -34,6 +34,7 @@ import (
 
 	reqcommon "github.com/llm-d/llm-d-router/pkg/common/request"
 	"github.com/llm-d/llm-d-router/pkg/common/routing"
+	"github.com/llm-d/llm-d-router/pkg/sidecar/constants"
 )
 
 const eventStreamContentType = "text/event-stream"
@@ -43,7 +44,7 @@ var _ = Describe("NIXL Connector (v2)", func() {
 	var testInfo *sidecarTestInfo
 
 	BeforeEach(func() {
-		testInfo = sidecarConnectionTestSetup(KVConnectorNIXLV2)
+		testInfo = sidecarConnectionTestSetup(constants.KVConnectorNIXLV2)
 	})
 
 	startProxy := func() string {
@@ -141,16 +142,16 @@ var _ = Describe("NIXL Connector (v2)", func() {
 		Expect(testInfo.prefillHandler.CompletionRequests).To(HaveLen(1))
 		prq1 := testInfo.prefillHandler.CompletionRequests[0]
 
-		Expect(prq1).To(HaveKey(requestFieldKVTransferParams))
-		kvTransferParams, ok := prq1[requestFieldKVTransferParams].(map[string]any)
+		Expect(prq1).To(HaveKey(reqcommon.FieldKVTransferParams))
+		kvTransferParams, ok := prq1[reqcommon.FieldKVTransferParams].(map[string]any)
 		Expect(ok).To(BeTrue())
 
-		Expect(kvTransferParams).To(HaveKeyWithValue(requestFieldDoRemoteDecode, true))
-		Expect(kvTransferParams).To(HaveKeyWithValue(requestFieldDoRemotePrefill, false))
-		Expect(kvTransferParams).To(HaveKeyWithValue(requestFieldRemoteBlockIDs, BeNil()))
-		Expect(kvTransferParams).To(HaveKeyWithValue(requestFieldRemoteEngineID, BeNil()))
-		Expect(kvTransferParams).To(HaveKeyWithValue(requestFieldRemoteHost, BeNil()))
-		Expect(kvTransferParams).To(HaveKeyWithValue(requestFieldRemotePort, BeNil()))
+		Expect(kvTransferParams).To(HaveKeyWithValue(reqcommon.FieldDoRemoteDecode, true))
+		Expect(kvTransferParams).To(HaveKeyWithValue(reqcommon.FieldDoRemotePrefill, false))
+		Expect(kvTransferParams).To(HaveKeyWithValue(reqcommon.FieldRemoteBlockIDs, BeNil()))
+		Expect(kvTransferParams).To(HaveKeyWithValue(reqcommon.FieldRemoteEngineID, BeNil()))
+		Expect(kvTransferParams).To(HaveKeyWithValue(reqcommon.FieldRemoteHost, BeNil()))
+		Expect(kvTransferParams).To(HaveKeyWithValue(reqcommon.FieldRemotePort, BeNil()))
 
 		Expect(prq1).To(HaveKeyWithValue("max_tokens", BeNumerically("==", 1)))
 		Expect(prq1).To(HaveKeyWithValue("stream", false))
@@ -158,7 +159,7 @@ var _ = Describe("NIXL Connector (v2)", func() {
 
 		Expect(testInfo.prefillHandler.CompletionResponses).To(HaveLen(1))
 		prp1 := testInfo.prefillHandler.CompletionResponses[0]
-		Expect(prp1).To(HaveKey(requestFieldKVTransferParams))
+		Expect(prp1).To(HaveKey(reqcommon.FieldKVTransferParams))
 
 		Expect(testInfo.decodeHandler.RequestCount.Load()).To(BeNumerically("==", 1))
 		Expect(testInfo.decodeHandler.CompletionRequests).To(HaveLen(1))
@@ -303,12 +304,12 @@ var _ = Describe("NIXL Connector (v2)", func() {
 			}`)
 
 		prefillReq := testInfo.prefillHandler.CompletionRequests[0]
-		Expect(prefillReq).To(HaveKeyWithValue(requestFieldMaxTokens, BeNumerically("==", 1)))
-		Expect(prefillReq).ToNot(HaveKey(requestFieldMinTokens))
+		Expect(prefillReq).To(HaveKeyWithValue(reqcommon.FieldMaxTokens, BeNumerically("==", 1)))
+		Expect(prefillReq).ToNot(HaveKey(reqcommon.FieldMinTokens))
 
 		decodeReq := testInfo.decodeHandler.CompletionRequests[0]
-		Expect(decodeReq).To(HaveKeyWithValue(requestFieldMaxTokens, BeNumerically("==", 100)))
-		Expect(decodeReq).To(HaveKeyWithValue(requestFieldMinTokens, BeNumerically("==", 5)))
+		Expect(decodeReq).To(HaveKeyWithValue(reqcommon.FieldMaxTokens, BeNumerically("==", 100)))
+		Expect(decodeReq).To(HaveKeyWithValue(reqcommon.FieldMinTokens, BeNumerically("==", 5)))
 	})
 
 	It("should cap prefill and drop the caps in decode when the request omits them", func() {
@@ -322,12 +323,12 @@ var _ = Describe("NIXL Connector (v2)", func() {
 			}`)
 
 		prefillReq := testInfo.prefillHandler.CompletionRequests[0]
-		Expect(prefillReq).To(HaveKeyWithValue(requestFieldMaxTokens, BeNumerically("==", 1)))
-		Expect(prefillReq).ToNot(HaveKey(requestFieldMinTokens))
+		Expect(prefillReq).To(HaveKeyWithValue(reqcommon.FieldMaxTokens, BeNumerically("==", 1)))
+		Expect(prefillReq).ToNot(HaveKey(reqcommon.FieldMinTokens))
 
 		decodeReq := testInfo.decodeHandler.CompletionRequests[0]
-		Expect(decodeReq).ToNot(HaveKey(requestFieldMaxTokens))
-		Expect(decodeReq).ToNot(HaveKey(requestFieldMinTokens))
+		Expect(decodeReq).ToNot(HaveKey(reqcommon.FieldMaxTokens))
+		Expect(decodeReq).ToNot(HaveKey(reqcommon.FieldMinTokens))
 	})
 
 	// Messages API tests. /v1/messages routes through the disaggregation handler
@@ -362,12 +363,12 @@ var _ = Describe("NIXL Connector (v2)", func() {
 		Expect(testInfo.prefillHandler.CompletionRequests).To(HaveLen(1))
 		prq1 := testInfo.prefillHandler.CompletionRequests[0]
 
-		Expect(prq1).To(HaveKey(requestFieldKVTransferParams))
-		kvTransferParams, ok := prq1[requestFieldKVTransferParams].(map[string]any)
+		Expect(prq1).To(HaveKey(reqcommon.FieldKVTransferParams))
+		kvTransferParams, ok := prq1[reqcommon.FieldKVTransferParams].(map[string]any)
 		Expect(ok).To(BeTrue())
 
-		Expect(kvTransferParams).To(HaveKeyWithValue(requestFieldDoRemoteDecode, true))
-		Expect(kvTransferParams).To(HaveKeyWithValue(requestFieldDoRemotePrefill, false))
+		Expect(kvTransferParams).To(HaveKeyWithValue(reqcommon.FieldDoRemoteDecode, true))
+		Expect(kvTransferParams).To(HaveKeyWithValue(reqcommon.FieldDoRemotePrefill, false))
 
 		Expect(prq1).To(HaveKeyWithValue("max_tokens", BeNumerically("==", 1)))
 		Expect(prq1).ToNot(HaveKey("max_completion_tokens"))
@@ -437,7 +438,7 @@ var _ = Describe("NIXL Connector (v2)", func() {
 		Expect(err).ToNot(HaveOccurred())
 
 		if rp.StatusCode != 200 {
-			bp, _ := io.ReadAll(rp.Body) //nolint:all
+			bp, _ := io.ReadAll(rp.Body) //nolint:errcheck
 			Fail(string(bp))
 		}
 
@@ -446,16 +447,16 @@ var _ = Describe("NIXL Connector (v2)", func() {
 		Expect(testInfo.prefillHandler.CompletionRequests).To(HaveLen(1))
 		prq1 := testInfo.prefillHandler.CompletionRequests[0]
 
-		Expect(prq1).To(HaveKey(requestFieldKVTransferParams))
-		kvTransferParams, ok := prq1[requestFieldKVTransferParams].(map[string]any)
+		Expect(prq1).To(HaveKey(reqcommon.FieldKVTransferParams))
+		kvTransferParams, ok := prq1[reqcommon.FieldKVTransferParams].(map[string]any)
 		Expect(ok).To(BeTrue())
 
-		Expect(kvTransferParams).To(HaveKeyWithValue(requestFieldDoRemoteDecode, true))
-		Expect(kvTransferParams).To(HaveKeyWithValue(requestFieldDoRemotePrefill, false))
-		Expect(kvTransferParams).To(HaveKeyWithValue(requestFieldRemoteBlockIDs, BeNil()))
-		Expect(kvTransferParams).To(HaveKeyWithValue(requestFieldRemoteEngineID, BeNil()))
-		Expect(kvTransferParams).To(HaveKeyWithValue(requestFieldRemoteHost, BeNil()))
-		Expect(kvTransferParams).To(HaveKeyWithValue(requestFieldRemotePort, BeNil()))
+		Expect(kvTransferParams).To(HaveKeyWithValue(reqcommon.FieldDoRemoteDecode, true))
+		Expect(kvTransferParams).To(HaveKeyWithValue(reqcommon.FieldDoRemotePrefill, false))
+		Expect(kvTransferParams).To(HaveKeyWithValue(reqcommon.FieldRemoteBlockIDs, BeNil()))
+		Expect(kvTransferParams).To(HaveKeyWithValue(reqcommon.FieldRemoteEngineID, BeNil()))
+		Expect(kvTransferParams).To(HaveKeyWithValue(reqcommon.FieldRemoteHost, BeNil()))
+		Expect(kvTransferParams).To(HaveKeyWithValue(reqcommon.FieldRemotePort, BeNil()))
 
 		Expect(prq1).To(HaveKeyWithValue("max_output_tokens", BeNumerically("==", 1)))
 		Expect(prq1).To(HaveKeyWithValue("stream", false))
@@ -463,10 +464,56 @@ var _ = Describe("NIXL Connector (v2)", func() {
 
 		Expect(testInfo.prefillHandler.CompletionResponses).To(HaveLen(1))
 		prp1 := testInfo.prefillHandler.CompletionResponses[0]
-		Expect(prp1).To(HaveKey(requestFieldKVTransferParams))
+		Expect(prp1).To(HaveKey(reqcommon.FieldKVTransferParams))
 
 		Expect(testInfo.decodeHandler.RequestCount.Load()).To(BeNumerically("==", 1))
 		Expect(testInfo.decodeHandler.CompletionRequests).To(HaveLen(1))
+
+		testInfo.cancelFn()
+		<-testInfo.stoppedCh
+	})
+
+	It("should refuse a Responses request carrying stateful fields", func() {
+		By("starting the proxy")
+		go func() {
+			defer GinkgoRecover()
+
+			testInfo.proxy.allowlistValidator = &AllowlistValidator{enabled: false}
+			err := testInfo.proxy.Start(testInfo.ctx)
+			Expect(err).ToNot(HaveOccurred())
+
+			testInfo.stoppedCh <- struct{}{}
+		}()
+
+		<-testInfo.proxy.readyCh
+		proxyBaseAddr := "http://" + testInfo.proxy.addr.String()
+
+		By("sending a /v1/responses request carrying stateful fields")
+		body := `{
+				"model": "gpt-4o",
+				"input": "Hello, how are you?",
+				"previous_response_id": "resp-123",
+				"conversation": "conv-123",
+				"store": true,
+				"background": true
+			}`
+
+		req, err := http.NewRequest(http.MethodPost, proxyBaseAddr+reqcommon.PathResponses, strings.NewReader(body))
+		Expect(err).ToNot(HaveOccurred())
+		req.Header.Add(routing.PrefillEndpointHeader, testInfo.prefillBackend.URL[len("http://"):])
+
+		rp, err := http.DefaultClient.Do(req)
+		Expect(err).ToNot(HaveOccurred())
+
+		By("verifying the client got a 400 naming the field")
+		Expect(rp.StatusCode).To(Equal(http.StatusBadRequest))
+		bp, err := io.ReadAll(rp.Body)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(string(bp)).To(ContainSubstring(reqcommon.FieldPreviousResponseID))
+
+		By("verifying neither backend was dispatched")
+		Expect(testInfo.prefillHandler.CompletionRequests).To(BeEmpty())
+		Expect(testInfo.decodeHandler.CompletionRequests).To(BeEmpty())
 
 		testInfo.cancelFn()
 		<-testInfo.stoppedCh
@@ -502,7 +549,7 @@ var _ = Describe("NIXL Connector (v2)", func() {
 		Expect(err).ToNot(HaveOccurred())
 
 		if rp.StatusCode != 200 {
-			bp, _ := io.ReadAll(rp.Body) //nolint:all
+			bp, _ := io.ReadAll(rp.Body) //nolint:errcheck
 			Fail(string(bp))
 		}
 
@@ -513,12 +560,18 @@ var _ = Describe("NIXL Connector (v2)", func() {
 
 		Expect(prefillReq).To(HaveKeyWithValue("max_output_tokens", BeNumerically("==", 1)))
 
+		By("verifying prefill request pins store=false so it leaves no stored response object")
+		Expect(prefillReq).To(HaveKeyWithValue("store", false))
+
 		By("verifying decode request has original max_output_tokens=100")
 		Expect(testInfo.decodeHandler.RequestCount.Load()).To(BeNumerically("==", 1))
 		Expect(testInfo.decodeHandler.CompletionRequests).To(HaveLen(1))
 		decodeReq := testInfo.decodeHandler.CompletionRequests[0]
 
 		Expect(decodeReq).To(HaveKeyWithValue("max_output_tokens", BeNumerically("==", 100)))
+
+		By("verifying decode request carries no store, the pin being prefill-only")
+		Expect(decodeReq).ToNot(HaveKey("store"))
 
 		testInfo.cancelFn()
 		<-testInfo.stoppedCh
@@ -553,7 +606,7 @@ var _ = Describe("NIXL Connector (v2)", func() {
 		Expect(err).ToNot(HaveOccurred())
 
 		if rp.StatusCode != 200 {
-			bp, _ := io.ReadAll(rp.Body) //nolint:all
+			bp, _ := io.ReadAll(rp.Body) //nolint:errcheck
 			Fail(string(bp))
 		}
 
@@ -564,12 +617,18 @@ var _ = Describe("NIXL Connector (v2)", func() {
 
 		Expect(prefillReq).To(HaveKeyWithValue("max_output_tokens", BeNumerically("==", 1)))
 
+		By("verifying prefill request pins store=false so it leaves no stored response object")
+		Expect(prefillReq).To(HaveKeyWithValue("store", false))
+
 		By("verifying decode request does not have max_output_tokens since it wasn't in original request")
 		Expect(testInfo.decodeHandler.RequestCount.Load()).To(BeNumerically("==", 1))
 		Expect(testInfo.decodeHandler.CompletionRequests).To(HaveLen(1))
 		decodeReq := testInfo.decodeHandler.CompletionRequests[0]
 
 		Expect(decodeReq).ToNot(HaveKey("max_output_tokens"))
+
+		By("verifying decode request carries no store, the pin being prefill-only")
+		Expect(decodeReq).ToNot(HaveKey("store"))
 
 		testInfo.cancelFn()
 		<-testInfo.stoppedCh
@@ -604,7 +663,7 @@ var _ = Describe("NIXL Connector (v2)", func() {
 		Expect(err).ToNot(HaveOccurred())
 
 		if rp.StatusCode != 200 {
-			bp, _ := io.ReadAll(rp.Body) //nolint:all
+			bp, _ := io.ReadAll(rp.Body) //nolint:errcheck
 			Fail(string(bp))
 		}
 
@@ -640,7 +699,7 @@ var _ = Describe("NIXL Connector (v2)", func() {
 			By("verifying decode received kv_transfer_params from the successful prefill")
 			Expect(testInfo.decodeHandler.RequestCount.Load()).To(BeNumerically("==", 1))
 			decodeReq := testInfo.decodeHandler.CompletionRequests[0]
-			Expect(decodeReq).To(HaveKey(requestFieldKVTransferParams))
+			Expect(decodeReq).To(HaveKey(reqcommon.FieldKVTransferParams))
 		},
 		Entry("502 Bad Gateway", http.StatusBadGateway),
 		Entry("503 Service Unavailable", http.StatusServiceUnavailable),
@@ -755,7 +814,7 @@ var _ = Describe("NIXL Connector (v2)", func() {
 		Expect(err).ToNot(HaveOccurred())
 
 		if rp.StatusCode != 200 {
-			bp, _ := io.ReadAll(rp.Body) //nolint:all
+			bp, _ := io.ReadAll(rp.Body) //nolint:errcheck
 			Fail(string(bp))
 		}
 
@@ -795,7 +854,7 @@ var _ = Describe("NIXL Connector (v2)", func() {
 
 		proxyBaseAddr := "http://" + testInfo.proxy.addr.String()
 
-		req, err := http.NewRequest(http.MethodPost, proxyBaseAddr+reqcommon.PathGenerate, strings.NewReader(body))
+		req, err := http.NewRequest(http.MethodPost, proxyBaseAddr+reqcommon.PathVLLMGenerate, strings.NewReader(body))
 		Expect(err).ToNot(HaveOccurred())
 		if withPrefillHeader {
 			req.Header.Add(routing.PrefillEndpointHeader, testInfo.prefillBackend.URL[len("http://"):])
@@ -812,7 +871,7 @@ var _ = Describe("NIXL Connector (v2)", func() {
 	}
 
 	samplingParamsOf := func(req map[string]any) map[string]any {
-		sp, ok := req[requestFieldSamplingParams].(map[string]any)
+		sp, ok := req[reqcommon.FieldSamplingParams].(map[string]any)
 		Expect(ok).To(BeTrue())
 		return sp
 	}
@@ -828,13 +887,13 @@ var _ = Describe("NIXL Connector (v2)", func() {
 		Expect(testInfo.prefillHandler.CompletionRequests).To(HaveLen(1))
 		prq1 := testInfo.prefillHandler.CompletionRequests[0]
 
-		kvTransferParams, ok := prq1[requestFieldKVTransferParams].(map[string]any)
+		kvTransferParams, ok := prq1[reqcommon.FieldKVTransferParams].(map[string]any)
 		Expect(ok).To(BeTrue())
-		Expect(kvTransferParams).To(HaveKeyWithValue(requestFieldDoRemoteDecode, true))
-		Expect(kvTransferParams).To(HaveKeyWithValue(requestFieldDoRemotePrefill, false))
+		Expect(kvTransferParams).To(HaveKeyWithValue(reqcommon.FieldDoRemoteDecode, true))
+		Expect(kvTransferParams).To(HaveKeyWithValue(reqcommon.FieldDoRemotePrefill, false))
 
-		Expect(samplingParamsOf(prq1)).To(HaveKeyWithValue(requestFieldMaxTokens, BeNumerically("==", 1)))
-		Expect(samplingParamsOf(prq1)).ToNot(HaveKey(requestFieldMinTokens))
+		Expect(samplingParamsOf(prq1)).To(HaveKeyWithValue(reqcommon.FieldMaxTokens, BeNumerically("==", 1)))
+		Expect(samplingParamsOf(prq1)).ToNot(HaveKey(reqcommon.FieldMinTokens))
 		Expect(prq1).To(HaveKeyWithValue("stream", false))
 
 		Expect(testInfo.decodeHandler.RequestCount.Load()).To(BeNumerically("==", 1))
@@ -849,12 +908,12 @@ var _ = Describe("NIXL Connector (v2)", func() {
 			}`, true)
 
 		prefillSP := samplingParamsOf(testInfo.prefillHandler.CompletionRequests[0])
-		Expect(prefillSP).To(HaveKeyWithValue(requestFieldMaxTokens, BeNumerically("==", 1)))
-		Expect(prefillSP).ToNot(HaveKey(requestFieldMinTokens))
+		Expect(prefillSP).To(HaveKeyWithValue(reqcommon.FieldMaxTokens, BeNumerically("==", 1)))
+		Expect(prefillSP).ToNot(HaveKey(reqcommon.FieldMinTokens))
 
 		decodeSP := samplingParamsOf(testInfo.decodeHandler.CompletionRequests[0])
-		Expect(decodeSP).To(HaveKeyWithValue(requestFieldMaxTokens, BeNumerically("==", 100)))
-		Expect(decodeSP).To(HaveKeyWithValue(requestFieldMinTokens, BeNumerically("==", 5)))
+		Expect(decodeSP).To(HaveKeyWithValue(reqcommon.FieldMaxTokens, BeNumerically("==", 100)))
+		Expect(decodeSP).To(HaveKeyWithValue(reqcommon.FieldMinTokens, BeNumerically("==", 5)))
 	})
 
 	It("should cap prefill and drop the caps in decode when sampling_params omits them", func() {
@@ -865,12 +924,12 @@ var _ = Describe("NIXL Connector (v2)", func() {
 			}`, true)
 
 		prefillSP := samplingParamsOf(testInfo.prefillHandler.CompletionRequests[0])
-		Expect(prefillSP).To(HaveKeyWithValue(requestFieldMaxTokens, BeNumerically("==", 1)))
-		Expect(prefillSP).ToNot(HaveKey(requestFieldMinTokens))
+		Expect(prefillSP).To(HaveKeyWithValue(reqcommon.FieldMaxTokens, BeNumerically("==", 1)))
+		Expect(prefillSP).ToNot(HaveKey(reqcommon.FieldMinTokens))
 
 		decodeSP := samplingParamsOf(testInfo.decodeHandler.CompletionRequests[0])
-		Expect(decodeSP).ToNot(HaveKey(requestFieldMaxTokens))
-		Expect(decodeSP).ToNot(HaveKey(requestFieldMinTokens))
+		Expect(decodeSP).ToNot(HaveKey(reqcommon.FieldMaxTokens))
+		Expect(decodeSP).ToNot(HaveKey(reqcommon.FieldMinTokens))
 		Expect(decodeSP).To(HaveKeyWithValue("temperature", BeNumerically("==", 0.7)))
 	})
 
@@ -881,11 +940,11 @@ var _ = Describe("NIXL Connector (v2)", func() {
 			}`, true)
 
 		prefillSP := samplingParamsOf(testInfo.prefillHandler.CompletionRequests[0])
-		Expect(prefillSP).To(HaveKeyWithValue(requestFieldMaxTokens, BeNumerically("==", 1)))
-		Expect(prefillSP).ToNot(HaveKey(requestFieldMinTokens))
+		Expect(prefillSP).To(HaveKeyWithValue(reqcommon.FieldMaxTokens, BeNumerically("==", 1)))
+		Expect(prefillSP).ToNot(HaveKey(reqcommon.FieldMinTokens))
 
 		decodeReq := testInfo.decodeHandler.CompletionRequests[0]
-		Expect(decodeReq).ToNot(HaveKey(requestFieldSamplingParams))
+		Expect(decodeReq).ToNot(HaveKey(reqcommon.FieldSamplingParams))
 	})
 
 	It("should pass through generate API request when no prefill header is set", func() {
@@ -901,7 +960,7 @@ var _ = Describe("NIXL Connector (v2)", func() {
 
 	// MoRI-IO WRITE-mode regression test.
 	// When --moriio-write-mode is enabled, the sidecar must populate
-	// remote_host / remote_notify_port / transfer_id on the prefill leg
+	// remote_host / remote_notify_port / transfer_id on the prefill request
 	// (rather than leaving them nil as the standard NIXLv2 contract does) so
 	// the prefill engine's MoRIIOConnector can issue RDMA Write to decode.
 	// The same transfer_id must also be carried forward into the decode request
@@ -914,7 +973,7 @@ var _ = Describe("NIXL Connector (v2)", func() {
 		stoppedCh := make(chan struct{})
 
 		decodeHandler := &mock.ChatCompletionHandler{
-			Connector:       KVConnectorNIXLV2,
+			Connector:       constants.KVConnectorNIXLV2,
 			Role:            mock.RoleDecode,
 			MoRIIOWriteMode: true,
 		}
@@ -922,7 +981,7 @@ var _ = Describe("NIXL Connector (v2)", func() {
 		DeferCleanup(decodeBackend.Close)
 
 		prefillHandler := &mock.ChatCompletionHandler{
-			Connector:       KVConnectorNIXLV2,
+			Connector:       constants.KVConnectorNIXLV2,
 			Role:            mock.RolePrefill,
 			MoRIIOWriteMode: true,
 		}
@@ -935,7 +994,7 @@ var _ = Describe("NIXL Connector (v2)", func() {
 		cfg := Config{
 			Port:                   "0",
 			DecoderURL:             decodeURL,
-			KVConnector:            KVConnectorNIXLV2,
+			KVConnector:            constants.KVConnectorNIXLV2,
 			MoRIIOWriteMode:        true,
 			MoRIIODecodeNotifyPort: 61005,
 			// r6: kv_transfer_params["remote_host"] is sourced from this
@@ -972,7 +1031,7 @@ var _ = Describe("NIXL Connector (v2)", func() {
 		rp, err := http.DefaultClient.Do(req)
 		Expect(err).ToNot(HaveOccurred())
 		if rp.StatusCode != 200 {
-			bp, _ := io.ReadAll(rp.Body) //nolint:all
+			bp, _ := io.ReadAll(rp.Body) //nolint:errcheck
 			Fail(string(bp))
 		}
 
@@ -981,12 +1040,12 @@ var _ = Describe("NIXL Connector (v2)", func() {
 		Expect(prefillHandler.CompletionRequests).To(HaveLen(1))
 		prq := prefillHandler.CompletionRequests[0]
 
-		Expect(prq).To(HaveKey(requestFieldKVTransferParams))
-		kv, ok := prq[requestFieldKVTransferParams].(map[string]any)
+		Expect(prq).To(HaveKey(reqcommon.FieldKVTransferParams))
+		kv, ok := prq[reqcommon.FieldKVTransferParams].(map[string]any)
 		Expect(ok).To(BeTrue())
 
 		// New WRITE-mode fields must be non-nil and match config / request UUID.
-		Expect(kv).To(HaveKeyWithValue(requestFieldRemoteHost, decodeURL.Hostname()))
+		Expect(kv).To(HaveKeyWithValue(reqcommon.FieldRemoteHost, decodeURL.Hostname()))
 		Expect(kv).To(HaveKeyWithValue(requestFieldRemoteNotifyPort, BeNumerically("==", 61005)))
 		Expect(kv).To(HaveKeyWithValue(requestFieldRemoteDPRank, BeNumerically("==", 0)))
 		Expect(kv).To(HaveKey(requestFieldTransferID))
@@ -994,11 +1053,11 @@ var _ = Describe("NIXL Connector (v2)", func() {
 
 		// Pre-existing nil fields are still nil because they are populated by
 		// the prefill engine's request_finished, not the sidecar.
-		Expect(kv).To(HaveKeyWithValue(requestFieldDoRemoteDecode, true))
-		Expect(kv).To(HaveKeyWithValue(requestFieldDoRemotePrefill, false))
-		Expect(kv).To(HaveKeyWithValue(requestFieldRemoteEngineID, BeNil()))
-		Expect(kv).To(HaveKeyWithValue(requestFieldRemoteBlockIDs, BeNil()))
-		Expect(kv).To(HaveKeyWithValue(requestFieldRemotePort, BeNil()))
+		Expect(kv).To(HaveKeyWithValue(reqcommon.FieldDoRemoteDecode, true))
+		Expect(kv).To(HaveKeyWithValue(reqcommon.FieldDoRemotePrefill, false))
+		Expect(kv).To(HaveKeyWithValue(reqcommon.FieldRemoteEngineID, BeNil()))
+		Expect(kv).To(HaveKeyWithValue(reqcommon.FieldRemoteBlockIDs, BeNil()))
+		Expect(kv).To(HaveKeyWithValue(reqcommon.FieldRemotePort, BeNil()))
 
 		transferID := kv[requestFieldTransferID]
 
@@ -1007,8 +1066,8 @@ var _ = Describe("NIXL Connector (v2)", func() {
 		Expect(decodeHandler.CompletionRequests).To(HaveLen(1))
 		drq := decodeHandler.CompletionRequests[0]
 
-		Expect(drq).To(HaveKey(requestFieldKVTransferParams))
-		dkv, ok := drq[requestFieldKVTransferParams].(map[string]any)
+		Expect(drq).To(HaveKey(reqcommon.FieldKVTransferParams))
+		dkv, ok := drq[reqcommon.FieldKVTransferParams].(map[string]any)
 		Expect(ok).To(BeTrue())
 		Expect(dkv).To(HaveKey(requestFieldTransferID))
 		Expect(dkv[requestFieldTransferID]).To(Equal(transferID))
@@ -1023,9 +1082,9 @@ var _ = Describe("NIXL Connector (v2)", func() {
 	// These tests use mocks and build Config directly - they don't need the
 	// MoRIIOFeatureEnabled gate since they bypass Options.Complete().
 
-	// 1P1D DP=8, concurrent dispatch: both legs pinned to one DP rank, decode
+	// 1P1D DP=8, concurrent dispatch: both requests pinned to one DP rank, decode
 	// flips do_remote_prefill, remote_dp_size carries the DP world size.
-	It("parallel-dispatch 1P1D DP=8 pins both legs to one DP rank and emits remote_dp_size", func() {
+	It("parallel-dispatch 1P1D DP=8 pins both requests to one DP rank and emits remote_dp_size", func() {
 		env := startMoRIProxy(func(c *Config) {
 			c.MoRIIOParallelDispatch = true
 			c.MoRIIODPSize = 8
@@ -1035,11 +1094,11 @@ var _ = Describe("NIXL Connector (v2)", func() {
 		Expect(env.prefillHandler.RequestCount.Load()).To(BeNumerically("==", 1))
 		Expect(env.decodeHandler.RequestCount.Load()).To(BeNumerically("==", 1))
 
-		By("prefill leg carries WRITE-mode + Wide-EP fields")
+		By("prefill request carries WRITE-mode + Wide-EP fields")
 		pkv := kvParams(env.prefillHandler, 0)
-		Expect(pkv).To(HaveKeyWithValue(requestFieldDoRemoteDecode, true))
-		Expect(pkv).To(HaveKeyWithValue(requestFieldDoRemotePrefill, false))
-		Expect(pkv).To(HaveKeyWithValue(requestFieldRemoteHost, env.decodePodIP))
+		Expect(pkv).To(HaveKeyWithValue(reqcommon.FieldDoRemoteDecode, true))
+		Expect(pkv).To(HaveKeyWithValue(reqcommon.FieldDoRemotePrefill, false))
+		Expect(pkv).To(HaveKeyWithValue(reqcommon.FieldRemoteHost, env.decodePodIP))
 		Expect(pkv).To(HaveKeyWithValue("remote_dp_size", BeNumerically("==", 8)))
 		Expect(pkv).To(HaveKeyWithValue(requestFieldRemoteDPRankOverride, true))
 		// Single-pod: the multi-pod fan-out keys must be omitted entirely.
@@ -1049,24 +1108,24 @@ var _ = Describe("NIXL Connector (v2)", func() {
 		Expect(ok).To(BeTrue())
 		Expect(pRank).To(And(BeNumerically(">=", 0), BeNumerically("<", 8)))
 
-		By("decode leg flips do_remote_prefill and reuses the same rank + transfer_id")
+		By("decode request flips do_remote_prefill and reuses the same rank + transfer_id")
 		dkv := kvParams(env.decodeHandler, 0)
-		Expect(dkv).To(HaveKeyWithValue(requestFieldDoRemotePrefill, true))
-		Expect(dkv).To(HaveKeyWithValue(requestFieldDoRemoteDecode, false))
+		Expect(dkv).To(HaveKeyWithValue(reqcommon.FieldDoRemotePrefill, true))
+		Expect(dkv).To(HaveKeyWithValue(reqcommon.FieldDoRemoteDecode, false))
 		Expect(dkv).To(HaveKeyWithValue("remote_dp_size", BeNumerically("==", 8)))
 		Expect(dkv[requestFieldRemoteDPRank]).To(Equal(pRank))
 		Expect(dkv[requestFieldTransferID]).To(Equal(pkv[requestFieldTransferID]))
 		Expect(dkv[requestFieldTransferID]).ToNot(BeEmpty())
 
-		By("both HTTP legs share the same X-Data-Parallel-Rank header")
+		By("both HTTP requests share the same X-Data-Parallel-Rank header")
 		ph := dpRankHeader(env.prefillHandler, 0)
 		Expect(ph).To(Equal(strconv.Itoa(int(pRank))))
 		Expect(dpRankHeader(env.decodeHandler, 0)).To(Equal(ph))
 	})
 
-	// 2P2D DP=16 multi-pod fan-out: each leg's remote_hosts is the opposite
-	// side's pod IPs (prefill leg -> decode IPs, decode leg -> prefill IPs).
-	It("parallel-dispatch 2P2D DP=EP=16 fans out remote_hosts with opposite host lists per leg", func() {
+	// 2P2D DP=16: the prefill request gets all decode hosts; the decode request
+	// gets the one prefill pod it was scheduled to.
+	It("parallel-dispatch 2P2D DP=EP=16 keeps the rank pod-local and pairs pods by host", func() {
 		prefillHosts := []string{testPrefillHostIP1, testPrefillHostIP2}
 		decodeHosts := []string{testDecodeHostIP, testDecodeHostIP2}
 		env := startMoRIProxy(func(c *Config) {
@@ -1081,23 +1140,26 @@ var _ = Describe("NIXL Connector (v2)", func() {
 		Expect(env.prefillHandler.RequestCount.Load()).To(BeNumerically("==", 1))
 		Expect(env.decodeHandler.RequestCount.Load()).To(BeNumerically("==", 1))
 
-		By("prefill leg fans out to the DECODE-side host list")
+		By("prefill request carries the whole DECODE-side host list")
 		pkv := kvParams(env.prefillHandler, 0)
 		Expect(pkv["remote_hosts"]).To(Equal([]any{testDecodeHostIP, testDecodeHostIP2}))
 		Expect(pkv).To(HaveKeyWithValue("remote_dp_size_local", BeNumerically("==", 8)))
 		Expect(pkv).To(HaveKeyWithValue("remote_dp_size", BeNumerically("==", 16)))
 
-		By("decode leg fans out to the PREFILL-side host list")
+		By("decode request carries only the prefill pod it was sent to")
 		dkv := kvParams(env.decodeHandler, 0)
-		Expect(dkv["remote_hosts"]).To(Equal([]any{testPrefillHostIP1, testPrefillHostIP2}))
+		Expect(dkv["remote_hosts"]).To(Equal([]any{dkv[reqcommon.FieldRemoteHost]}))
 		Expect(dkv).To(HaveKeyWithValue("remote_dp_size_local", BeNumerically("==", 8)))
-		Expect(dkv).To(HaveKeyWithValue(requestFieldDoRemotePrefill, true))
+		Expect(dkv).To(HaveKeyWithValue("remote_dp_size", BeNumerically("==", 8)))
+		Expect(dkv).To(HaveKeyWithValue(reqcommon.FieldDoRemotePrefill, true))
+		Expect(dkv).To(HaveKeyWithValue("is_request_leader", true))
 
-		By("both legs share one pinned DP rank in [0,16)")
+		By("both requests share one pinned DP rank in [0, dp_size_local)")
 		Expect(dpRankHeader(env.prefillHandler, 0)).To(Equal(dpRankHeader(env.decodeHandler, 0)))
 		pRank, ok := pkv[requestFieldRemoteDPRank].(float64)
 		Expect(ok).To(BeTrue())
-		Expect(pRank).To(And(BeNumerically(">=", 0), BeNumerically("<", 16)))
+		Expect(pRank).To(And(BeNumerically(">=", 0), BeNumerically("<", 8)))
+		Expect(dkv[requestFieldRemoteDPRank]).To(Equal(pRank))
 	})
 
 	// The concurrent-dispatch path stages its own prefill body rather than going
@@ -1116,12 +1178,12 @@ var _ = Describe("NIXL Connector (v2)", func() {
 			}`)
 
 		prefillReq := env.prefillHandler.GetCompletionRequests()[0]
-		Expect(prefillReq).To(HaveKeyWithValue(requestFieldMaxTokens, BeNumerically("==", 1)))
-		Expect(prefillReq).ToNot(HaveKey(requestFieldMinTokens))
+		Expect(prefillReq).To(HaveKeyWithValue(reqcommon.FieldMaxTokens, BeNumerically("==", 1)))
+		Expect(prefillReq).ToNot(HaveKey(reqcommon.FieldMinTokens))
 
 		decodeReq := env.decodeHandler.GetCompletionRequests()[0]
-		Expect(decodeReq).To(HaveKeyWithValue(requestFieldMaxTokens, BeNumerically("==", 100)))
-		Expect(decodeReq).To(HaveKeyWithValue(requestFieldMinTokens, BeNumerically("==", 5)))
+		Expect(decodeReq).To(HaveKeyWithValue(reqcommon.FieldMaxTokens, BeNumerically("==", 100)))
+		Expect(decodeReq).To(HaveKeyWithValue(reqcommon.FieldMinTokens, BeNumerically("==", 5)))
 	})
 
 	// The same path on a non-chat API: concurrent dispatch stages its own prefill
@@ -1131,14 +1193,14 @@ var _ = Describe("NIXL Connector (v2)", func() {
 		env := startMoRIProxy(func(c *Config) {
 			c.MoRIIOParallelDispatch = true
 		})
-		env.sendTo(reqcommon.PathGenerate, generateRequestBodyWithTokenLimits)
+		env.sendTo(reqcommon.PathVLLMGenerate, generateRequestBodyWithTokenLimits)
 
 		expectGenerateRequestTokenLimitsOn(env.prefillHandler, env.decodeHandler)
 	})
 
-	// 1P1D DP=8, serial dispatch: the prefill leg sets the DP-rank header and
-	// the decode leg's kv_transfer_params are backfilled with the same rank.
-	It("serial WRITE-mode DP=8 pins prefill and decode HTTP legs to the same DP rank", func() {
+	// 1P1D DP=8, serial dispatch: the prefill request sets the DP-rank header and
+	// the decode request's kv_transfer_params are backfilled with the same rank.
+	It("serial WRITE-mode DP=8 pins prefill and decode HTTP requests to the same DP rank", func() {
 		env := startMoRIProxy(func(c *Config) {
 			c.MoRIIODPSize = 8 // ParallelDispatch stays false -> strictly-serial path
 		})
@@ -1166,9 +1228,9 @@ var _ = Describe("NIXL Connector (v2)", func() {
 		proxyBaseAddr := startProxy()
 		sendChatCompletionsRequest(proxyBaseAddr)
 
-		pkv, ok := testInfo.prefillHandler.CompletionRequests[0][requestFieldKVTransferParams].(map[string]any)
+		pkv, ok := testInfo.prefillHandler.CompletionRequests[0][reqcommon.FieldKVTransferParams].(map[string]any)
 		Expect(ok).To(BeTrue())
-		Expect(pkv).To(HaveKeyWithValue(requestFieldRemoteHost, BeNil()))
+		Expect(pkv).To(HaveKeyWithValue(reqcommon.FieldRemoteHost, BeNil()))
 		Expect(pkv).ToNot(HaveKey(requestFieldTransferID))
 		Expect(pkv).ToNot(HaveKey("remote_dp_size"))
 		Expect(pkv).ToNot(HaveKey("remote_hosts"))
@@ -1186,7 +1248,7 @@ var _ = Describe("NIXL Connector (v2)", func() {
 		proxyBaseAddr := startProxy()
 		sendChatCompletionsRequest(proxyBaseAddr)
 
-		dkv, _ := testInfo.decodeHandler.CompletionRequests[0][requestFieldKVTransferParams].(map[string]any)
+		dkv, _ := testInfo.decodeHandler.CompletionRequests[0][reqcommon.FieldKVTransferParams].(map[string]any)
 		Expect(dkv).ToNot(HaveKey(requestFieldRemoteDPRank))
 		Expect(dkv).ToNot(HaveKey(requestFieldRemoteDPRankOverride))
 
@@ -1217,7 +1279,7 @@ func startMoRIProxy(mutate func(cfg *Config)) *moriProxyEnv {
 	env := &moriProxyEnv{}
 
 	env.decodeHandler = &mock.ChatCompletionHandler{
-		Connector:       KVConnectorNIXLV2,
+		Connector:       constants.KVConnectorNIXLV2,
 		Role:            mock.RoleDecode,
 		MoRIIOWriteMode: true,
 	}
@@ -1225,7 +1287,7 @@ func startMoRIProxy(mutate func(cfg *Config)) *moriProxyEnv {
 	DeferCleanup(env.decodeBackend.Close)
 
 	env.prefillHandler = &mock.ChatCompletionHandler{
-		Connector:       KVConnectorNIXLV2,
+		Connector:       constants.KVConnectorNIXLV2,
 		Role:            mock.RolePrefill,
 		MoRIIOWriteMode: true,
 	}
@@ -1239,7 +1301,7 @@ func startMoRIProxy(mutate func(cfg *Config)) *moriProxyEnv {
 	cfg := Config{
 		Port:                       "0",
 		DecoderURL:                 decodeURL,
-		KVConnector:                KVConnectorNIXLV2,
+		KVConnector:                constants.KVConnectorNIXLV2,
 		MoRIIOWriteMode:            true,
 		MoRIIODecodePodIP:          env.decodePodIP,
 		MoRIIODecodeNotifyPort:     61005,
@@ -1272,7 +1334,7 @@ func startMoRIProxy(mutate func(cfg *Config)) *moriProxyEnv {
 }
 
 // send issues a /v1/chat/completions request with the prefill header and
-// asserts a 200.  Both legs have completed (wg.Wait in the concurrent path,
+// asserts a 200. Both requests have completed (wg.Wait in the concurrent path,
 // sequential in the serial path) by the time this returns, so the captured
 // requests / headers are safe to read afterwards.
 func (env *moriProxyEnv) send() {
@@ -1296,7 +1358,7 @@ func (env *moriProxyEnv) sendTo(path, body string) {
 func kvParams(h *mock.ChatCompletionHandler, i int) map[string]any { //nolint:unparam // i kept for future multi-request tests
 	reqs := h.GetCompletionRequests()
 	ExpectWithOffset(1, len(reqs)).To(BeNumerically(">", i))
-	kv, ok := reqs[i][requestFieldKVTransferParams].(map[string]any)
+	kv, ok := reqs[i][reqcommon.FieldKVTransferParams].(map[string]any)
 	ExpectWithOffset(1, ok).To(BeTrue())
 	return kv
 }

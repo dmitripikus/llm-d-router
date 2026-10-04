@@ -40,19 +40,17 @@ func init() {
 }
 
 type ConditionalDecodeStep struct {
-	useOpenAIFormat bool
-	gwClient        *gateway.Client
+	gwClient *gateway.Client
 }
 
 func NewConditionalDecodeStep(gwClient *gateway.Client, params map[string]any) (pipeline.Step, error) {
 	if gwClient == nil {
 		return nil, errors.New("conditional-decode: gateway client is required")
 	}
-	useOpenAI, err := parseUseOpenAIFormat(params)
-	if err != nil {
+	if err := rejectUseOpenAIFormatOverride(ConditionalDecodeStepName, params); err != nil {
 		return nil, err
 	}
-	return &ConditionalDecodeStep{useOpenAIFormat: useOpenAI, gwClient: gwClient}, nil
+	return &ConditionalDecodeStep{gwClient: gwClient}, nil
 }
 
 func (s *ConditionalDecodeStep) Name() string { return ConditionalDecodeStepName }
@@ -64,8 +62,8 @@ func (s *ConditionalDecodeStep) Execute(ctx context.Context, reqCtx *pipeline.Re
 		return fmt.Errorf("conditional-decode: %w", err)
 	}
 
-	body := maps.Clone(reqCtx.Body)
-	if err := s.prepareBody(reqCtx, body, resolveFormat(s.useOpenAIFormat, reqCtx.OriginalPath)); err != nil {
+	body, err := s.prepareBody(reqCtx)
+	if err != nil {
 		return err
 	}
 
@@ -111,27 +109,21 @@ func (s *ConditionalDecodeStep) Execute(ctx context.Context, reqCtx *pipeline.Re
 	return pipeline.ErrPipelineDone
 }
 
-func (s *ConditionalDecodeStep) prepareBody(reqCtx *pipeline.RequestContext, body map[string]any, format reqcommon.APIType) error {
+func (s *ConditionalDecodeStep) prepareBody(reqCtx *pipeline.RequestContext) (map[string]any, error) {
+	body := maps.Clone(reqCtx.Body)
+	format := reqcommon.DetectAPIType(reqCtx.OriginalPath)
+
 	switch format {
 	case reqcommon.APITypeChatCompletions:
-		if len(reqCtx.TokenIDs) > 0 {
-			tokens := map[string]any{
-				"token_ids": reqCtx.TokenIDs,
-			}
-			if features := buildMMFeatures(reqCtx.MultimodalEntries, false); features != nil {
-				tokens["features"] = features
-			}
-			body["tokens"] = tokens
-		}
+		// The client's chat-completions body is forwarded as-is.
 	case reqcommon.APITypeCompletions:
 		if len(reqCtx.TokenIDs) > 0 {
 			body["prompt"] = reqCtx.TokenIDs
 		}
-	case reqcommon.APITypeGenerate:
+	case reqcommon.APITypeVLLMGenerate:
 		// The client's generate body already carries token_ids.
 	default:
-		// resolveFormat only ever yields the three formats above.
-		return fmt.Errorf("conditional-decode: unsupported request format %v", format)
+		return nil, unreachableFormatError(format)
 	}
-	return nil
+	return body, nil
 }

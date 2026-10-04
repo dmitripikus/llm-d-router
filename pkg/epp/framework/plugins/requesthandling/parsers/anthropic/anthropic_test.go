@@ -1,5 +1,5 @@
 /*
-Copyright 2025 The Kubernetes Authors.
+Copyright 2025 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -27,9 +27,29 @@ import (
 	"k8s.io/utils/ptr"
 	v1 "sigs.k8s.io/gateway-api-inference-extension/api/v1"
 
+	"github.com/llm-d/llm-d-router/pkg/epp/framework/common/request"
 	fwkplugin "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/plugin"
 	fwkrh "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/requesthandling"
 )
+
+func TestAnthropicParser_RewritePriority(t *testing.T) {
+	t.Run("strips client priority and writes resolved priority", func(t *testing.T) {
+		parser := NewAnthropicParser()
+		got, mutated, err := parser.RewritePriority(fwkrh.PriorityRewriteContext{}, fwkrh.PayloadMap{"model": "test", "priority": 100}, 2)
+		require.NoError(t, err)
+		assert.True(t, mutated)
+		m := got.(fwkrh.PayloadMap)
+		assert.Equal(t, 2, m["priority"])
+	})
+	t.Run("writes priority when none supplied", func(t *testing.T) {
+		parser := NewAnthropicParser()
+		got, mutated, err := parser.RewritePriority(fwkrh.PriorityRewriteContext{}, fwkrh.PayloadMap{"model": "test"}, 2)
+		require.NoError(t, err)
+		assert.True(t, mutated)
+		m := got.(fwkrh.PayloadMap)
+		assert.Equal(t, 2, m["priority"])
+	})
+}
 
 func TestNewAnthropicParser(t *testing.T) {
 	parser := NewAnthropicParser()
@@ -448,6 +468,17 @@ func TestAnthropicParser_ParseRequest(t *testing.T) {
 				t.Errorf("ParseRequest() got.SkipResponseProcessing = %v, want false", got.SkipResponseProcessing)
 			}
 
+			tt.want.RawBody = bodyBytes
+			payload, _ := tt.want.Payload.AsMap()
+			for key, value := range payload {
+				raw, err := json.Marshal(value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if key == "system" || raw[0] == '{' || raw[0] == '[' {
+					payload[key] = json.RawMessage(raw)
+				}
+			}
 			// Model is extracted from the request body's "model" field.
 			tt.want.Model, _ = tt.body["model"].(string)
 
@@ -622,7 +653,7 @@ func TestAnthropicParser_ParseResponse_Streaming(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parser.ParseResponse(context.Background(), tt.chunk, map[string]string{contentType: eventStreamType}, true)
+			got, err := parser.ParseResponse(context.Background(), tt.chunk, map[string]string{request.HeaderContentType: request.MediaTypeEventStream}, true)
 			if err != nil {
 				t.Fatalf("ParseResponse() error = %v", err)
 			}
@@ -665,7 +696,7 @@ func TestAnthropicParser_Claims(t *testing.T) {
 	parser := NewAnthropicParser()
 	got := parser.Claims()
 	want := fwkrh.Claims{
-		Paths:     []string{messagesAPI, countTokensAPI},
+		Paths:     []string{messagesAPI, countTokensAPI, messagesAPI + "/render"},
 		Protocols: []v1.AppProtocol{v1.AppProtocolH2C, v1.AppProtocolHTTP},
 	}
 

@@ -1,5 +1,6 @@
 /*
 Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -25,6 +26,7 @@ import (
 	"github.com/go-logr/logr"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/llm-d/llm-d-router/pkg/common/clamp"
 	errcommon "github.com/llm-d/llm-d-router/pkg/common/error"
 	logutil "github.com/llm-d/llm-d-router/pkg/common/observability/logging"
 	"github.com/llm-d/llm-d-router/pkg/epp/flowcontrol/contracts"
@@ -179,7 +181,7 @@ func (fcac *FlowControlAdmissionController) Admit(
 	fcReq := &flowControlRequest{
 		fairnessID:          reqCtx.SchedulingRequest.FairnessID,
 		priority:            priority,
-		requestByteSize:     uint64(reqCtx.RequestSize),
+		requestByteSize:     clamp.Uint64(reqCtx.RequestSize),
 		inferenceRequest:    reqCtx.SchedulingRequest,
 		receivedTimestamp:   reqCtx.RequestReceivedTimestamp,
 		reqMetadata:         reqCtx.Request.Metadata,

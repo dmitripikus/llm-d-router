@@ -1,5 +1,6 @@
 /*
 Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -23,6 +24,7 @@ import (
 
 	errcommon "github.com/llm-d/llm-d-router/pkg/common/error"
 	reqcommon "github.com/llm-d/llm-d-router/pkg/common/request"
+	"github.com/llm-d/llm-d-router/pkg/common/routing"
 	"github.com/llm-d/llm-d-router/pkg/epp/metadata"
 )
 
@@ -54,8 +56,25 @@ var (
 		errcommon.RequestDroppedReasonHeaderKey,
 	)
 
+	// InternalRoutingHeaders carry worker addresses that the P/D sidecar connects to.
+	// Only EPP plugins may set them: client values are dropped on ingress and
+	// removed from the forwarded request when no plugin sets them.
+	InternalRoutingHeaders = sets.New(
+		routing.PrefillEndpointHeader,
+		routing.EncoderEndpointsHeader,
+		routing.DataParallelEndpointHeader,
+		routing.KVCacheSourceHeader,
+	)
+
 	// ProtocolHeaders are managed by the proxy layer (Envoy/EPP).
-	ProtocolHeaders = sets.New("content-length")
+	// W3C trace context headers are re-injected from the active span in
+	// generateHeaders and must not be forwarded from the client.
+	ProtocolHeaders = sets.New(
+		"content-length",
+		"traceparent",
+		"tracestate",
+		"baggage",
+	)
 )
 
 func IsSystemOwnedHeader(key string) bool {
