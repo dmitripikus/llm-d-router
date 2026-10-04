@@ -979,7 +979,24 @@ func captureFanout(t *testing.T, reqCtx *pipeline.RequestContext) []fanoutPairin
 	t.Helper()
 	var mu sync.Mutex
 	var pairings []fanoutPairing
+	inFlight := 0
 	encoderBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A sub-request's position identifies its entry only while the fanout
+		// is serialized. Fail loudly if two ever overlap, so raising
+		// max_parallel cannot quietly turn the assertions below into claims
+		// about arrival order.
+		mu.Lock()
+		inFlight++
+		if inFlight > 1 {
+			t.Errorf("fanout sub-requests overlapped; position no longer identifies an entry")
+		}
+		mu.Unlock()
+		defer func() {
+			mu.Lock()
+			inFlight--
+			mu.Unlock()
+		}()
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read encoder body: %v", err)
