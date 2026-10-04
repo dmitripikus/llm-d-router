@@ -124,8 +124,8 @@ func (s *RenderStep) SetServiceAddress(addr string) {
 func (s *RenderStep) Name() string { return RenderStepName }
 
 func (s *RenderStep) Execute(ctx context.Context, reqCtx *pipeline.RequestContext) error {
-	// Entries reaching here were built by replace_media_urls. On the generate
-	// path executeGenerate builds them below, where extractMultimodalEntries
+	// Entries reaching here came from replace_media_urls; on the generate path
+	// executeGenerate builds them below, where extractMultimodalEntries
 	// rejects an empty modality key outright.
 	if err := validateEntryModalities(reqCtx.MultimodalEntries); err != nil {
 		return fmt.Errorf("render: %w", err)
@@ -300,10 +300,10 @@ func (s *RenderStep) executeChatCompletions(ctx context.Context, reqCtx *pipelin
 		return fmt.Errorf("render returned %d kwargs_data but expected %d", totalKwargs, expected)
 	}
 
-	// Walk entries in order and pull their hash/placeholder/kwargs from the
-	// response using a per-modality position counter. For an image-only
-	// request against an image-only response, modIndex[image] counts 0, 1,
-	// 2... and each entry pairs with the response slot at that position.
+	// Walk entries in order, pulling hash/placeholder/kwargs from the response
+	// by a per-modality position counter: for an image-only request against an
+	// image-only response, modIndex[image] counts 0, 1, 2... and each entry
+	// pairs with the response slot at that position.
 	modIndex := make(map[string]int)
 	for i := range reqCtx.MultimodalEntries {
 		mod := reqCtx.MultimodalEntries[i].Modality

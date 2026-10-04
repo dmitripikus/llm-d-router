@@ -461,10 +461,9 @@ const (
 	testHashAudio = "H-aud"
 )
 
-// TestInjectUUIDs_TagsAllMediaParts asserts every recognized media
-// content-part type receives a uuid tag matching its (modality, local index)
-// entry in MultimodalEntries. Non-media parts (text, unknown types) are
-// left alone.
+// Every recognized media content-part type receives a uuid tag matching its
+// (modality, local index) entry in MultimodalEntries. Non-media parts (text,
+// unknown types) are left alone.
 func TestInjectUUIDs_TagsAllMediaParts(t *testing.T) {
 	step := &DecodeStep{}
 	imagePart := map[string]any{"type": "image_url", "image_url": map[string]any{"url": "u-img"}}
@@ -508,9 +507,8 @@ func TestInjectUUIDs_TagsAllMediaParts(t *testing.T) {
 	}
 }
 
-// TestInjectUUIDs_TagsRepeatedModalityInOrder asserts that two audio parts
-// in the same request receive the hashes of the two audio entries, in
-// walker order.
+// Two audio parts in the same request receive the hashes of the two audio
+// entries, in walker order.
 func TestInjectUUIDs_TagsRepeatedModalityInOrder(t *testing.T) {
 	step := &DecodeStep{}
 	aud0 := map[string]any{"type": "audio_url", "audio_url": map[string]any{"url": "u0"}}
@@ -535,11 +533,10 @@ func TestInjectUUIDs_TagsRepeatedModalityInOrder(t *testing.T) {
 	}
 }
 
-// TestInjectUUIDs_SkipsMalformedParts asserts that content parts
-// replace_media_urls silently drops (missing/null inner map, non-string
-// url, empty input_audio data) also do not consume a slot here. The one
-// well-formed part of each modality must receive its entry's hash even
-// when a malformed part appears earlier in the same message.
+// Content parts replace_media_urls silently drops (missing/null inner map,
+// non-string url, empty input_audio data) must not consume a slot here either:
+// the one well-formed part of each modality must receive its entry's hash even
+// with a malformed part earlier in the same message.
 func TestInjectUUIDs_SkipsMalformedParts(t *testing.T) {
 	step := &DecodeStep{}
 	malformedImg := map[string]any{"type": "image_url", "image_url": map[string]any{"url": nil}}
@@ -577,21 +574,20 @@ func TestInjectUUIDs_SkipsMalformedParts(t *testing.T) {
 	}
 }
 
-// TestInjectUUIDs_ExtraPartForModalityStaysUntagged pins what happens when a
-// modality has more well-formed parts than entries: the surplus part is left
-// without a uuid and the request proceeds.
+// Pins what happens when a modality has more well-formed parts than entries:
+// the surplus part is left without a uuid and the request proceeds.
 //
-// Degrading here rather than failing is deliberate, and differs from the encode
-// step on purpose. uuid is the decode backend's prefix-cache key, so an untagged
-// part still carries its payload and the request stays correct; the cost is a
-// cache lookup. The encode fanout fails on the same mismatch because it would
-// otherwise build a sub-request pairing an entry with another part's bytes.
+// Degrading rather than failing is deliberate, and differs from the encode step
+// on purpose: uuid is only the decode backend's prefix-cache key, so an
+// untagged part still carries its payload and the request stays correct, at the
+// cost of a cache lookup. The encode fanout fails on the same mismatch because
+// it would otherwise pair an entry with another part's bytes.
 //
 // The surplus parts are the trailing ones, so every earlier part keeps the hash
-// it would have received anyway. Asserting the absence of the key, rather than a
-// non-matching value, is what makes the "tagged with the wrong hash" regression
-// fail this test instead of passing it. The image part is here as a control: an
-// audio overflow must not shift another modality's positions.
+// it would have received anyway. Asserting the key's absence, rather than a
+// non-matching value, is what makes a "tagged with the wrong hash" regression
+// fail here. The image part is a control: an audio overflow must not shift
+// another modality's positions.
 func TestInjectUUIDs_ExtraPartForModalityStaysUntagged(t *testing.T) {
 	step := &DecodeStep{}
 	imagePart := map[string]any{"type": "image_url", "image_url": map[string]any{"url": "u-img"}}
@@ -635,15 +631,13 @@ func TestInjectUUIDs_ExtraPartForModalityStaysUntagged(t *testing.T) {
 	}
 }
 
-// TestDecodeStep_EntryWithoutModalityFails is the decode counterpart of
-// TestPrefillStep_EntryWithoutModalityFails: it covers the validateEntryModalities
-// guard at this step's boundary, not the guard itself (utils_test.go does that).
-//
-// Decode proxies straight to the worker, so without the guard the untagged entry
-// would reach it -- and decode's uuid tagging keys on Modality, so the response
-// would be built on whichever part the empty label happened to pair with. The
-// upstream handler fails the test if it runs, and nothing may be written to the
-// client: the guard has to reject before the proxy takes over the response.
+// The decode counterpart of TestPrefillStep_EntryWithoutModalityFails: covers
+// the validateEntryModalities guard at this step's boundary, not the guard
+// itself (utils_test.go does that). Decode proxies straight to the worker, and
+// uuid tagging keys on Modality, so without the guard the response would be
+// built on whichever part the empty label paired with. The upstream handler
+// fails the test if it runs, and nothing may be written to the client: the
+// guard must reject before the proxy takes over the response.
 func TestDecodeStep_EntryWithoutModalityFails(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("decode must not reach the upstream with an untagged entry")

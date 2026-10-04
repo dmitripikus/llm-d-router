@@ -95,9 +95,9 @@ func (s *EncodeStep) Execute(ctx context.Context, reqCtx *pipeline.RequestContex
 	logger := log.FromContext(ctx).WithName(EncodeStepName)
 
 	// On the generate path the prefill worker runs the encoder inline from
-	// kwargs_data (image pixel tensors, audio spectrograms, video frames all
-	// take this path), so the encode fanout and EC handoff would be redundant.
-	// Skipping avoids shipping the preprocessed tensor a second time
+	// kwargs_data (image tensors, audio spectrograms, and video frames all take
+	// this path), so the encode fanout and EC handoff would be redundant and
+	// would ship the preprocessed tensor a second time
 	// (see https://github.com/vllm-project/vllm/issues/46722).
 	if reqcommon.DetectAPIType(reqCtx.OriginalPath) == reqcommon.APITypeGenerate {
 		logger.V(logutil.DEFAULT).Info("skipping encode for generate request")
@@ -115,9 +115,9 @@ func (s *EncodeStep) Execute(ctx context.Context, reqCtx *pipeline.RequestContex
 		partsByMod = collectMediaParts(reqCtx.Body)
 	}
 
-	// Per-modality running counter: entry i's local index is the number
-	// of earlier entries sharing its modality. See mediaPartIsWellFormed
-	// for how entries and parts stay lined up.
+	// Per-modality running counter: entry i's local index is the number of
+	// earlier entries sharing its modality. See mediaPartIsWellFormed for how
+	// entries and parts stay lined up.
 	modCounter := make(map[string]int)
 	for i, entry := range reqCtx.MultimodalEntries {
 		mod := entry.Modality
@@ -129,10 +129,9 @@ func (s *EncodeStep) Execute(ctx context.Context, reqCtx *pipeline.RequestContex
 			body, err := s.buildEncodeBody(reqCtx, tokenIDs, entry, mod, localIdx, format, partsByMod)
 			if err != nil {
 				// Entries and parts got out of line upstream (see
-				// mediaPartIsWellFormed). Both are built from the same
-				// request by the same rule, so reaching here means the
-				// coordinator has a bug. Fail rather than send the encoder
-				// a request already known to be wrong.
+				// mediaPartIsWellFormed). Both come from the same request by
+				// the same rule, so this is a coordinator bug: fail rather
+				// than send the encoder a request known to be wrong.
 				err = fmt.Errorf("encode[%d]: %w", i, err)
 				logger.Error(err, "encode fanout entry has no media part",
 					"index", i,
@@ -224,8 +223,8 @@ func (s *EncodeStep) buildEncodeTokenIDs(fullTokenIDs []int, entry pipeline.Mult
 }
 
 // buildEncodeBody builds one fanout sub-request. mod and localIdx are the
-// entry's pairing coordinates, both resolved by Execute: mod is the entry's
-// modality, localIdx its position among the entries sharing that modality.
+// entry's pairing coordinates, resolved by Execute: its modality, and its
+// position among the entries sharing that modality.
 func (s *EncodeStep) buildEncodeBody(reqCtx *pipeline.RequestContext, tokenIDs []int, entry pipeline.MultimodalEntry, mod string, localIdx int, format reqcommon.APIType, partsByMod map[string][]map[string]any) (map[string]any, error) {
 	placeholder := map[string]any{"offset": 1, "length": entry.Placeholder.Length}
 	switch format {
@@ -267,13 +266,11 @@ func (s *EncodeStep) buildEncodeBody(reqCtx *pipeline.RequestContext, tokenIDs [
 	}
 }
 
-// collectMediaParts walks the request messages once and returns the media
-// parts grouped by modality, each per-modality list in the order they
-// appeared in the request. Non-media parts (text, tool_use, etc.) are
-// skipped, and so are parts that fail mediaPartIsWellFormed. See that
-// function for how the grouping stays lined up with MultimodalEntries.
-// Uses partTypeModality as the authoritative list of recognized media
-// part types.
+// collectMediaParts walks the request messages once and returns the media parts
+// grouped by modality, each list in request order. Non-media parts (text,
+// tool_use, etc.) are skipped, as are parts failing mediaPartIsWellFormed; see
+// that function for how the grouping stays lined up with MultimodalEntries.
+// partTypeModality is the authoritative list of recognized media part types.
 func collectMediaParts(body map[string]any) map[string][]map[string]any {
 	messages, _ := body["messages"].([]any)
 	partsByMod := make(map[string][]map[string]any)
@@ -305,15 +302,12 @@ func collectMediaParts(body map[string]any) map[string][]map[string]any {
 	return partsByMod
 }
 
-// buildSingleMediaContent returns the OpenAI content-part representing the
-// entry at (modality, localIdx) in the per-modality parts map. It emits
-// the part verbatim in its native shape, {type: <partType>, <partType>:
-// <innerMap>}, so a caller can drop the returned map directly into an
-// encode sub-request's messages[0].content slice.
-//
-// An out-of-range localIdx means entries and parts got out of line (see
-// mediaPartIsWellFormed) and returns an error, since the part holds the bytes
-// the encoder is being asked to encode.
+// buildSingleMediaContent returns the OpenAI content-part for the entry at
+// (modality, localIdx) in the per-modality parts map, verbatim in its native
+// shape {type: <partType>, <partType>: <innerMap>}, ready to drop into an
+// encode sub-request's messages[0].content slice. An out-of-range localIdx
+// means entries and parts got out of line (see mediaPartIsWellFormed) and is an
+// error, since the part holds the bytes the encoder is asked to encode.
 func buildSingleMediaContent(partsByMod map[string][]map[string]any, modality string, localIdx int) (map[string]any, error) {
 	parts := partsByMod[modality]
 	if localIdx < 0 || localIdx >= len(parts) {

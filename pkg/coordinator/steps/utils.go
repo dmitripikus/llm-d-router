@@ -79,18 +79,17 @@ func resolveFormat(useOpenAIFormat bool, path string) reqcommon.APIType {
 
 // buildMMFeatures builds the multimodal features map (mm_hashes, mm_placeholders,
 // and optionally kwargs_data) from the request's multimodal entries. It returns
-// nil when there are no entries. Entries are grouped by Modality so a
-// mixed-modality request produces one key per modality in each feature map.
+// nil when there are no entries. Entries are grouped by Modality, so a
+// mixed-modality request has one key per modality in each feature map.
 func buildMMFeatures(entries []pipeline.MultimodalEntry, includeKwargs bool) map[string]any {
 	if len(entries) == 0 {
 		return nil
 	}
 	hashesByMod := make(map[string][]string)
 	placeholdersByMod := make(map[string][]any)
-	// Left nil unless the caller asked for kwargs_data. The decode and
+	// Left nil unless the caller asked for kwargs_data: the decode and
 	// conditional-decode bodies never carry it, and building it there would
-	// allocate a map, a slice per modality, and a boxed value per entry on
-	// every multimodal request.
+	// allocate a map, a slice per modality, and a box per entry for nothing.
 	var kwargsByMod map[string][]any
 	if includeKwargs {
 		kwargsByMod = make(map[string][]any)
@@ -116,22 +115,16 @@ func buildMMFeatures(entries []pipeline.MultimodalEntry, includeKwargs bool) map
 	return features
 }
 
-// validateEntryModalities rejects a MultimodalEntry with no Modality. Steps
-// that read entries call it before doing so.
-//
-// Both producers set the field: replace_media_urls stamps it from
-// partTypeModality, and extractMultimodalEntries rejects an empty modality key
-// as a client error. Reaching here therefore means a coordinator bug, so the
-// error is deliberately not ErrBadRequest: a request that gets this far should
-// surface as a 5xx rather than blame the caller.
+// validateEntryModalities rejects a MultimodalEntry with no Modality; steps
+// that read entries call it first. Both producers set the field, so reaching
+// here means a coordinator bug: the error is deliberately not ErrBadRequest,
+// since such a request should surface as a 5xx rather than blame the caller.
 //
 // Failing is what keeps a mislabeled entry from corrupting a response. Every
-// reader keys per-modality pairing on this field (mm_hashes, the encode fanout,
-// decode's uuid tagging, render's per-modality slots). An entry that resolved to
-// some default modality instead would be spliced into that modality's index
-// sequence at each of those sites, pairing with another entry's part or response
-// slot and shifting the local index of every later entry sharing the label. The
-// request would complete and return a response built on a guess.
+// reader pairs per-modality by position on this field, so an entry defaulted to
+// some modality would splice into that modality's index sequence, pair with
+// another entry's part or response slot, and shift every later entry sharing
+// the label. The request would complete on a guess.
 func validateEntryModalities(entries []pipeline.MultimodalEntry) error {
 	for i, entry := range entries {
 		if entry.Modality == "" {
@@ -142,12 +135,10 @@ func validateEntryModalities(entries []pipeline.MultimodalEntry) error {
 }
 
 // kwargsSentinel implements the JSON-null "resolve from cache" convention for
-// a single kwargs_data slot. The empty string is our internal "resolve from
-// cache" sentinel and MUST serialize as JSON null, not "": vLLM treats null
-// (or an absent field) as a cache-hit item to fetch from the encoder cache by
-// hash, whereas "" is decoded as an inline tensor and fails with "Input data
-// was truncated". Non-empty entries are the base64 tensor blobs and are
-// forwarded verbatim.
+// one kwargs_data slot. Our sentinel is the empty string, which MUST serialize
+// as null, not "": vLLM reads null (or an absent field) as a cache-hit item to
+// fetch by hash, while "" is decoded as an inline tensor and fails with "Input
+// data was truncated". Non-empty entries are base64 tensor blobs, verbatim.
 func kwargsSentinel(k string) any {
 	if k == "" {
 		return nil
@@ -155,9 +146,9 @@ func kwargsSentinel(k string) any {
 	return k
 }
 
-// singleEntryKwargs builds a kwargs_data feature value for a single-entry
-// encode fanout request. Used by encode.buildEncodeBody where each fanout
-// sub-request carries exactly one entry's kwargs under its modality key.
+// singleEntryKwargs builds a kwargs_data value for one entry: each encode
+// fanout sub-request carries exactly one entry's kwargs under its modality
+// key. Used by encode.buildEncodeBody.
 func singleEntryKwargs(modality, kwargs string) map[string][]any {
 	return map[string][]any{modality: {kwargsSentinel(kwargs)}}
 }
@@ -261,11 +252,10 @@ func extractTokenIDs(raw any) ([]int, error) {
 }
 
 // mmModalityArray reads features[field][modality] as a JSON array. present is
-// false when field or its per-modality entry is absent or null, a valid
-// "no such modality" state rather than an error. A present value of the wrong
-// type (field not an object, or the modality entry not an array) is
-// ErrBadRequest, so a malformed request fails loudly instead of being silently
-// coerced to absent.
+// false when field or its per-modality entry is absent or null, a valid "no
+// such modality" state rather than an error. A present value of the wrong type
+// is ErrBadRequest, so a malformed request fails loudly instead of reading as
+// absent.
 func mmModalityArray(features map[string]any, field, modality string) (arr []any, present bool, err error) {
 	rawField, ok := features[field]
 	if !ok || rawField == nil {
@@ -286,18 +276,13 @@ func mmModalityArray(features map[string]any, field, modality string) (arr []any
 	return arr, true, nil
 }
 
-// modalitiesInFeatures returns the sorted set of modality keys present in
-// features[field]. Sorting keeps entry ordering deterministic across map
-// iteration for tests and for downstream consumers that rely on a stable
-// order. Returns (nil, nil) when features[field] is absent or an empty
-// object, (nil, ErrBadRequest) when features[field] is present but not an
-// object (fail-loud on malformed responses).
-//
-// An empty key is rejected rather than carried. The key becomes
-// MultimodalEntry.Modality, which every reader uses as the map key for
-// positional per-modality pairing, and this is the boundary where a
-// client-supplied features map turns into entries. validateEntryModalities
-// states what an entry with no modality would cost downstream.
+// modalitiesInFeatures returns the modality keys present in features[field],
+// sorted so entry ordering stays deterministic across map iteration for tests
+// and stable-order consumers. (nil, nil) when absent or an empty object,
+// ErrBadRequest when present but not an object. An empty key is rejected here
+// because this is where a client-supplied features map becomes entries, and the
+// key becomes MultimodalEntry.Modality, every reader's key for positional
+// pairing; validateEntryModalities states what an untagged entry would cost.
 func modalitiesInFeatures(features map[string]any, field string) ([]string, error) {
 	raw, ok := features[field]
 	if !ok || raw == nil {
@@ -322,13 +307,10 @@ func modalitiesInFeatures(features map[string]any, field string) ([]string, erro
 }
 
 // checkModalitiesHashed reports an error when mm_placeholders or kwargs_data
-// carries a modality that hashed does not name. mm_hashes decides which
-// modalities a features map describes, and only the modalities it names are
-// turned into entries.
-//
-// Skipping the extra key instead would drop the item from the body that
-// prefill and decode receive while its placeholder tokens stay in token_ids,
-// so the engine sees a prompt whose placeholders have nothing behind them.
+// carries a modality hashed does not name: only modalities mm_hashes names
+// become entries, so skipping the extra key would drop the item from the
+// prefill and decode bodies while its placeholder tokens stay in token_ids,
+// leaving the engine placeholders with nothing behind them.
 func checkModalitiesHashed(features map[string]any, hashed []string) error {
 	known := make(map[string]struct{}, len(hashed))
 	for _, mod := range hashed {
@@ -350,25 +332,16 @@ func checkModalitiesHashed(features map[string]any, hashed []string) error {
 }
 
 // extractMultimodalEntries builds []pipeline.MultimodalEntry from the parallel
-// slices in a generate-format features map. Every modality key present under
-// mm_hashes produces a run of entries in the returned slice; modalities are
-// visited in sorted order for determinism. Returns nil when features is nil or
-// mm_hashes carries no items (text-only request).
+// slices in a generate-format features map. Each modality key under mm_hashes
+// produces a run of entries, modalities visited in sorted order for
+// determinism. Returns nil for a text-only request.
 //
-// mm_hashes names the modality set. A modality key that only the other fields
-// carry is ErrBadRequest, because it describes an item with no hash that no
-// entry can be built from.
-//
-// Per-modality invariants:
-//   - mm_hashes and mm_placeholders are required and must be the same length.
-//   - kwargs_data is optional: an absent field means every item resolves from
-//     the encoder cache by hash, so each entry's KwargsData is "". When
-//     present, kwargs_data must be parallel to mm_hashes, but an individual
-//     item may be null (a cache hit within a mixed batch), which maps to "".
-//
-// Returns ErrBadRequest when a present field has the wrong type, the
-// per-modality slices have different lengths, or any element has an unexpected
-// type.
+// mm_hashes names the modality set, so a modality only the other fields carry
+// is ErrBadRequest: it describes an item with no hash to build an entry from.
+// Per modality, mm_hashes and mm_placeholders are required and of equal length;
+// kwargs_data is optional, and an absent field or a null item means "resolve
+// from the encoder cache by hash", which maps to an empty KwargsData. A wrong
+// type, a length mismatch, or an unexpected element is ErrBadRequest.
 func extractMultimodalEntries(features map[string]any) ([]pipeline.MultimodalEntry, error) {
 	if features == nil {
 		return nil, nil
@@ -410,9 +383,9 @@ func extractMultimodalEntries(features map[string]any) ([]pipeline.MultimodalEnt
 			return nil, fmt.Errorf("features length mismatch for %s: mm_hashes has %d, mm_placeholders has %d: %w",
 				mod, n, len(rawPlaceholders), pipeline.ErrBadRequest)
 		}
-		// When present, kwargs_data is parallel to mm_hashes: full length with null
-		// placeholders for cached items, never a shortened list. The whole field is
-		// absent for metadata-only (cache-hit) requests.
+		// When present, kwargs_data is parallel to mm_hashes: full length with
+		// nulls for cached items, never shortened. Metadata-only (cache-hit)
+		// requests omit the field entirely.
 		if hasKwargs && len(rawKwargs) != n {
 			return nil, fmt.Errorf("features length mismatch for %s: mm_hashes has %d, kwargs_data has %d: %w",
 				mod, n, len(rawKwargs), pipeline.ErrBadRequest)
@@ -428,12 +401,11 @@ func extractMultimodalEntries(features map[string]any) ([]pipeline.MultimodalEnt
 			if !ok {
 				return nil, fmt.Errorf("mm_placeholders[%s][%d] must be an object: %w", mod, i, pipeline.ErrBadRequest)
 			}
-			// The non-negative guarantee here is load-bearing, not just input
-			// hygiene. EncodeStep.buildEncodeTokenIDs indexes fullTokenIDs[offset]
-			// (guarded only on the upper bound) and allocates make([]int, 1+length);
-			// a negative offset or length panics there. vLLM's own schema declares
-			// these as plain ints and accepts negatives, so this stays stricter
-			// deliberately. Do not relax it to a plain int parse.
+			// The non-negative guarantee is load-bearing:
+			// EncodeStep.buildEncodeTokenIDs indexes fullTokenIDs[offset]
+			// (upper-bound guarded only) and allocates make([]int, 1+length),
+			// which panics on a negative. vLLM accepts negatives here, so this
+			// is deliberately stricter; do not relax it to a plain int parse.
 			offset, err := anyToNonNegativeInt(pMap["offset"])
 			if err != nil {
 				return nil, fmt.Errorf("mm_placeholders[%s][%d].offset: %v: %w", mod, i, err, pipeline.ErrBadRequest)
@@ -443,7 +415,7 @@ func extractMultimodalEntries(features map[string]any) ([]pipeline.MultimodalEnt
 				return nil, fmt.Errorf("mm_placeholders[%s][%d].length: %v: %w", mod, i, err, pipeline.ErrBadRequest)
 			}
 
-			// Empty KwargsData is the sentinel for "resolve from cache": either the
+			// Empty KwargsData is the "resolve from cache" sentinel: either the
 			// whole kwargs_data field is absent or this item is null.
 			var kwarg string
 			if hasKwargs {

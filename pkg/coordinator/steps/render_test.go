@@ -114,13 +114,11 @@ func TestRenderStep_ParsesFullResponse(t *testing.T) {
 	}
 }
 
-// TestRenderStep_ChatCompletions_MultipleModalities covers the chat-completions
-// path with entries in three modalities (image, audio, video). The render
-// server returns per-modality slices, and the step must fill each entry
-// with the hash, placeholder, and kwargs from the slot that matches its
-// modality and its per-modality position. Without this test the multi-
-// modality bounds check and per-modality walker in render.go have no
-// coverage on the chat-completions path.
+// The chat-completions path with entries in three modalities (image, audio,
+// video). The render server returns per-modality slices, and each entry must be
+// filled with the hash, placeholder, and kwargs from the slot matching its
+// modality and per-modality position. Without this, render.go's multi-modality
+// bounds check and per-modality walker have no coverage on this path.
 func TestRenderStep_ChatCompletions_MultipleModalities(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -152,10 +150,9 @@ func TestRenderStep_ChatCompletions_MultipleModalities(t *testing.T) {
 	}
 	step.(*RenderStep).SetServiceAddress(server.URL)
 
-	// Entries are pre-populated in walker order (image, audio, video), the
-	// same order replace_media_urls would produce for a request that mixes
-	// the three modalities. Render fills in Hash/Placeholder/KwargsData
-	// per entry from the matching per-modality slot.
+	// Entries are pre-populated in walker order (image, audio, video), as
+	// replace_media_urls would produce for a request mixing the three. Render
+	// fills in each entry's Hash/Placeholder/KwargsData from the matching slot.
 	reqCtx := &pipeline.RequestContext{
 		OriginalPath: reqcommon.PathChatCompletions,
 		Body:         map[string]any{"model": "test-model", "messages": []any{}},
@@ -193,29 +190,21 @@ func TestRenderStep_ChatCompletions_MultipleModalities(t *testing.T) {
 	}
 }
 
-// TestRenderStep_ChatCompletions_RejectsWrongModalitySplit covers the two
-// response checks on this path, and the difference between them.
-//
-// The aggregate check sums every per-modality slice and compares the total to
-// the entry count, so it catches a response that returns the wrong number of
-// items overall. It cannot see a response that returns the right number sorted
-// into the wrong modalities: the per-entry guard is what catches that, by
-// requiring each entry to find a slot in its own modality's slice.
+// Covers the two response checks on this path and the difference between them.
+// The aggregate check sums every per-modality slice against the entry count, so
+// it catches a response with the wrong number of items overall, but not one
+// with the right number sorted into the wrong modalities; the per-entry guard
+// catches that, by requiring each entry to find a slot in its own modality's
+// slice.
 //
 // Every case but the last keeps all three totals equal to the entry count, so
-// only the per-entry guard can reject them. They misfile a different field each,
+// only the per-entry guard can reject them, each misfiling a different field
 // because that guard tests mm_hashes, mm_placeholders, and kwargs_data
-// separately and one misfiled field would otherwise leave two clauses unrun.
-//
-// The short_modality_slice case is the one that pins the comparison itself. In
-// the other cases the entry's modality is absent from the response, so a slice
-// length of zero is enough to reject them, and a guard weakened to check only
-// for an empty slice would still pass. There the slice exists and is one item
-// short, which is the shape a weakened guard would answer by handing the entry
-// the previous entry's hash instead of failing.
-//
-// A malformed render response is the service's fault, not the caller's, so
-// these are plain errors rather than ErrBadRequest and surface as 5xx.
+// separately. short_modality_slice pins the comparison itself: its slice exists
+// one item short, the shape a guard weakened to check only for an empty slice
+// would answer by handing the entry the previous entry's hash. A malformed
+// render response is the service's fault, not the caller's, so these are plain
+// errors rather than ErrBadRequest and surface as 5xx.
 func TestRenderStep_ChatCompletions_RejectsWrongModalitySplit(t *testing.T) {
 	placeholder := func(offset, length int) any {
 		return map[string]any{"offset": offset, "length": length}
@@ -812,12 +801,10 @@ func TestRenderStep_GenerateFormat_MultipleImages(t *testing.T) {
 	}
 }
 
-// TestRenderStep_GenerateFormat_MultipleModalities exercises the
-// generate path with mm features carrying image, audio, and video
-// entries in one request. The render step walks modalities in
-// alphabetical order (audio, image, video) so MultimodalEntries comes
-// back tagged with the right modality per slot and each entry's Hash /
-// KwargsData / Placeholder pair through cleanly.
+// The generate path with mm features carrying image, audio, and video entries
+// in one request. The render step walks modalities alphabetically (audio,
+// image, video), so MultimodalEntries comes back tagged with the right modality
+// per slot and each entry's Hash / KwargsData / Placeholder pairs cleanly.
 func TestRenderStep_GenerateFormat_MultipleModalities(t *testing.T) {
 	step, err := NewRenderStep(nil, map[string]any{})
 	if err != nil {
@@ -999,18 +986,15 @@ func TestRenderStep_GenerateFormat_MissingTokenIDs(t *testing.T) {
 	}
 }
 
-// TestRenderStep_EntryWithoutModalityFails is the render counterpart of
-// TestPrefillStep_EntryWithoutModalityFails: it covers the validateEntryModalities
-// guard at this step's boundary, not the guard itself (utils_test.go does that).
-//
-// The chat-completions path is the one that matters here. Its entries arrive from
-// replace_media_urls, and render fills each one from the response slot for its
-// Modality, so an untagged entry would look for a slot under the empty key. On the
-// generate path render builds the entries itself and extractMultimodalEntries
-// rejects an empty modality key as a client error before this guard is reachable.
-//
-// The render service fails the test if it is called: the guard has to reject
-// before the upstream request, not after.
+// The render counterpart of TestPrefillStep_EntryWithoutModalityFails: covers
+// the validateEntryModalities guard at this step's boundary, not the guard
+// itself (utils_test.go does that). The chat-completions path is the one that
+// matters: its entries arrive from replace_media_urls and render fills each
+// from the response slot for its Modality, so an untagged entry would look for
+// a slot under the empty key, while on the generate path render builds the
+// entries itself and extractMultimodalEntries rejects an empty modality key as
+// a client error before this guard is reachable. The render service fails the
+// test if it is called: the guard must reject before the upstream request.
 func TestRenderStep_EntryWithoutModalityFails(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("render must not reach the rendering service with an untagged entry")

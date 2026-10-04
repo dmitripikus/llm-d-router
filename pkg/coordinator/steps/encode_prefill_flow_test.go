@@ -38,17 +38,13 @@ import (
 var testECParams = map[string]any{"peer_port": 5501, "size_bytes": 1228800, "nixl_agent_metadata_b64": "bml4..."}
 
 // encodeSubRequestHash returns the modality and hash one encode fanout
-// sub-request carries.
-//
-// A sub-request covers exactly one entry, so features.mm_hashes holds a single
-// modality key with a single hash under it (see singleEntryKwargs). Reading
-// whichever key is present, rather than assuming image, is what lets a fake
-// encoder serve audio and video sub-requests. The shape is asserted so an
-// encode-side regression surfaces as a named failure instead of an index panic
-// inside the handler.
-//
-// Failures are reported with Errorf, not Fatalf: this runs on the server's
-// goroutine, and FailNow must be called from the goroutine running the test.
+// sub-request carries. A sub-request covers exactly one entry, so
+// features.mm_hashes holds one modality key with one hash (see
+// singleEntryKwargs), and reading whichever key is present rather than assuming
+// image is what lets a fake encoder serve audio and video. The shape is
+// asserted so an encode-side regression surfaces as a named failure instead of
+// an index panic. Failures use Errorf, not Fatalf: this runs on the server's
+// goroutine, and FailNow must be called from the test's own goroutine.
 func encodeSubRequestHash(t *testing.T, body []byte) (modality, hash string, ok bool) {
 	t.Helper()
 	var parsed map[string]any
@@ -79,10 +75,9 @@ func encodeSubRequestHash(t *testing.T, body []byte) (modality, hash string, ok 
 }
 
 // newEncodePrefillGateway serves the encode and prefill phases for the flow
-// tests below. ecFor decides what one encode sub-request gets back, keyed by the
-// modality and hash it carried; returning nil sends an empty response, standing
-// in for an encoder that reports no EC params. The prefill request body is
-// decoded into prefillBody.
+// tests below. ecFor decides what one encode sub-request gets back, keyed by
+// the modality and hash it carried; nil sends an empty response, standing in
+// for an encoder reporting no EC params. The prefill body lands in prefillBody.
 func newEncodePrefillGateway(t *testing.T, prefillBody *map[string]any, kvParams map[string]any, ecFor func(modality, hash string) map[string]any) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -294,21 +289,19 @@ func TestEncodeToPrefill_PartialECResponse(t *testing.T) {
 	}
 }
 
-// TestEncodeToPrefill_MixedModalityECFlow runs the encode-to-prefill flow with
-// one entry per modality.
-//
-// The two steps describe the same media items in different terms, and the
-// prefill body is where the two meet. Encode reports EC params keyed by hash,
-// which carries no modality, while prefill groups the features by modality. The
-// per-step tests cover each side on its own; nothing else checks that the two
-// agree once a request holds more than one modality.
+// The encode-to-prefill flow with one entry per modality. The two steps
+// describe the same media items in different terms and the prefill body is
+// where they meet: encode reports EC params keyed by hash, which carries no
+// modality, while prefill groups features by modality. The per-step tests cover
+// each side alone; nothing else checks that the two agree once a request holds
+// more than one modality.
 func TestEncodeToPrefill_MixedModalityECFlow(t *testing.T) {
 	var prefillBody map[string]any
 
-	// Record what each sub-request asked for, so the fanout is checked to have
-	// filed every entry under its own modality rather than defaulting to image.
-	// The fanout is concurrent, so each sub-request lands on its own server
-	// goroutine and the map needs a lock.
+	// Record what each sub-request asked for, to check the fanout filed every
+	// entry under its own modality rather than defaulting to image. The fanout
+	// is concurrent, so each sub-request lands on its own server goroutine and
+	// the map needs a lock.
 	var mu sync.Mutex
 	seen := map[string]string{}
 	gwServer := newEncodePrefillGateway(t, &prefillBody,

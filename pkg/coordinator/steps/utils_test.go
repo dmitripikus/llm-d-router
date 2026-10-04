@@ -304,9 +304,8 @@ func TestExtractMultimodalEntries(t *testing.T) {
 	})
 
 	t.Run("mm_hashes_non_image_modality_requires_placeholders", func(t *testing.T) {
-		// The extractor walks every modality present in mm_hashes; a
-		// response carrying audio hashes must supply matching
-		// placeholders or the request is rejected.
+		// The extractor walks every modality in mm_hashes, so a response
+		// carrying audio hashes must supply matching placeholders.
 		features := map[string]any{"mm_hashes": map[string]any{"audio": []any{testHash}}}
 		_, err := extractMultimodalEntries(features)
 		if !errors.Is(err, pipeline.ErrBadRequest) {
@@ -538,10 +537,9 @@ func TestBuildMMFeatures_CacheHitSentinelSerializesAsNull(t *testing.T) {
 	})
 }
 
-// TestBuildMMFeatures_GroupsByModality feeds entries with mixed Modality
-// values and asserts the output maps carry one key per distinct modality:
-// buildMMFeatures produces per-modality-keyed maps whose shape already
-// supports audio and video alongside image.
+// Entries with mixed Modality values must produce output maps with one key per
+// distinct modality: buildMMFeatures's shape already supports audio and video
+// alongside image.
 func TestBuildMMFeatures_GroupsByModality(t *testing.T) {
 	entries := []pipeline.MultimodalEntry{
 		{Modality: ModalityImage, Hash: "img-a", KwargsData: "k-img-a",
@@ -580,14 +578,12 @@ func TestBuildMMFeatures_GroupsByModality(t *testing.T) {
 	}
 }
 
-// TestValidateEntryModalities covers the invariant guard the steps run before
-// reading entries. An entry with no Modality is an error rather than a value
-// resolved to some default, because every reader keys per-modality pairing on
-// the field and a defaulted entry would be spliced into another modality's
-// index sequence.
-//
-// The error is deliberately not ErrBadRequest: both producers set the field, so
-// reaching the guard means a coordinator bug, not bad client input.
+// The invariant guard the steps run before reading entries. An entry with no
+// Modality is an error rather than a value resolved to some default, because
+// every reader keys per-modality pairing on the field and a defaulted entry
+// would splice into another modality's index sequence. The error is
+// deliberately not ErrBadRequest: both producers set the field, so reaching the
+// guard means a coordinator bug, not bad client input.
 func TestValidateEntryModalities(t *testing.T) {
 	entries := []pipeline.MultimodalEntry{
 		{Modality: ModalityImage, Hash: "h1"},
@@ -613,10 +609,9 @@ func TestValidateEntryModalities(t *testing.T) {
 	}
 }
 
-// TestExtractMultimodalEntries_MultiModalityResponse feeds a synthetic
-// response carrying both image and audio feature slices and asserts entries
-// come back tagged with the right modality and in a deterministic order
-// (sorted by modality key).
+// A synthetic response carrying both image and audio feature slices must come
+// back tagged with the right modality, in deterministic order (sorted by
+// modality key).
 func TestExtractMultimodalEntries_MultiModalityResponse(t *testing.T) {
 	features := map[string]any{
 		"mm_hashes": map[string]any{
@@ -659,9 +654,8 @@ func TestExtractMultimodalEntries_MultiModalityResponse(t *testing.T) {
 	}
 }
 
-// TestExtractMultimodalEntries_UnhashedModalityRejected covers a modality that
-// mm_hashes leaves out. Dropping it would strip the item from the prefill and
-// decode bodies while its placeholder tokens stay in token_ids.
+// A modality that mm_hashes leaves out: dropping it would strip the item from
+// the prefill and decode bodies while its placeholder tokens stay in token_ids.
 func TestExtractMultimodalEntries_UnhashedModalityRejected(t *testing.T) {
 	placeholder := func(offset, length int) any {
 		return map[string]any{"offset": float64(offset), "length": float64(length)}
@@ -719,14 +713,12 @@ func TestExtractMultimodalEntries_UnhashedModalityRejected(t *testing.T) {
 	}
 }
 
-// TestExtractMultimodalEntries_EmptyModalityKeyRejected covers a features map
-// naming a modality with the empty string. The key becomes
-// MultimodalEntry.Modality, and features is client-supplied on the generate
+// A features map naming a modality with the empty string. The key becomes
+// MultimodalEntry.Modality and features is client-supplied on the generate
 // path, so this is the boundary that has to reject it: an entry with no
 // modality reaching a reader would be a coordinator bug, and an accepted empty
-// key would let a client manufacture one.
-//
-// Rejected as a client error, since the request body is what is wrong.
+// key would let a client manufacture one. Rejected as a client error, since the
+// request body is what is wrong.
 func TestExtractMultimodalEntries_EmptyModalityKeyRejected(t *testing.T) {
 	placeholder := func(offset, length int) any {
 		return map[string]any{"offset": float64(offset), "length": float64(length)}
@@ -769,9 +761,8 @@ func TestExtractMultimodalEntries_EmptyModalityKeyRejected(t *testing.T) {
 	}
 }
 
-// TestExtractMultimodalEntries_EmptyModalityListAccepted covers a modality
-// declared with no items. Every field agrees on zero, so there is nothing to
-// drop and nothing to reject.
+// A modality declared with no items: every field agrees on zero, so there is
+// nothing to drop and nothing to reject.
 func TestExtractMultimodalEntries_EmptyModalityListAccepted(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

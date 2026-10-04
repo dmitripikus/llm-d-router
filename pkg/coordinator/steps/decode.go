@@ -140,19 +140,18 @@ func (s *DecodeStep) injectTokensField(reqCtx *pipeline.RequestContext) {
 	reqCtx.Body["tokens"] = tokens
 }
 
-// injectUUIDs tags each media content part with the uuid the decode
-// backend uses for prefix-cache keying. See mediaPartIsWellFormed for
-// how each part is matched with its MultimodalEntry. Non-media parts
-// (text, tool_use, unknown types) are skipped.
+// injectUUIDs tags each media content part with the uuid the decode backend
+// uses for prefix-cache keying; see mediaPartIsWellFormed for how a part is
+// matched with its MultimodalEntry. Non-media parts are skipped.
 func (s *DecodeStep) injectUUIDs(reqCtx *pipeline.RequestContext, logger logr.Logger) {
 	messages, ok := reqCtx.Body["messages"].([]any)
 	if !ok {
 		return
 	}
 
-	// Group hashes by modality in entry order so the walker below can
-	// index into hashesByMod[modality] at the per-modality position for
-	// O(1) lookup per part. Build is O(n).
+	// Group hashes by modality in entry order, so the walker below can index
+	// hashesByMod[modality] at the per-modality position: O(1) per part after
+	// an O(n) build.
 	hashesByMod := make(map[string][]string)
 	for _, entry := range reqCtx.MultimodalEntries {
 		hashesByMod[entry.Modality] = append(hashesByMod[entry.Modality], entry.Hash)
@@ -189,11 +188,10 @@ func (s *DecodeStep) injectUUIDs(reqCtx *pipeline.RequestContext, logger logr.Lo
 				partMap["uuid"] = hashes[localIdx]
 				continue
 			}
-			// A miss means entries and parts got out of line upstream
-			// (see mediaPartIsWellFormed). The part still goes to the
-			// backend without its uuid, so this costs a cache lookup
-			// rather than the request. Log at DEBUG so the mismatch is
-			// visible when someone looks.
+			// A miss means entries and parts got out of line upstream (see
+			// mediaPartIsWellFormed). The part still reaches the backend,
+			// without its uuid, so this costs a cache lookup rather than the
+			// request; DEBUG keeps the mismatch visible when someone looks.
 			logger.V(logutil.DEBUG).Info("no MultimodalEntry for well-formed media part",
 				"modality", modality,
 				"local_index", localIdx,

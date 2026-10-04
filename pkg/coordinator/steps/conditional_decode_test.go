@@ -421,15 +421,13 @@ func probeCount(t *testing.T, reg *prometheus.Registry, result string) float64 {
 	return 0
 }
 
-// TestConditionalDecodeStep_EntryWithoutModalityFails is the conditional-decode
-// counterpart of TestPrefillStep_EntryWithoutModalityFails: it covers the
+// The conditional-decode counterpart of
+// TestPrefillStep_EntryWithoutModalityFails: covers the
 // validateEntryModalities guard at this step's boundary, not the guard itself
-// (utils_test.go does that).
-//
-// This step is the earliest one that can serve a client directly, so an untagged
-// entry reaching the worker here could return a cache hit built on a mispaired
-// entry before prefill's guard ever runs. The upstream handler fails the test if
-// it runs, and nothing may be written to the client.
+// (utils_test.go does that). This step is the earliest that can serve a client
+// directly, so an untagged entry reaching the worker here could return a cache
+// hit built on a mispaired entry before prefill's guard ever runs. The upstream
+// handler fails the test if it runs, and nothing may be written to the client.
 func TestConditionalDecodeStep_EntryWithoutModalityFails(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("conditional-decode must not reach the upstream with an untagged entry")

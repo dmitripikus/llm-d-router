@@ -761,13 +761,12 @@ func TestPrefillStep_CoercesInvalidKVTransferParams(t *testing.T) {
 	}
 }
 
-// TestPrefillStep_EntryWithoutModalityFails covers the invariant guard at a step
-// boundary. An entry with no Modality fails the request instead of being grouped
-// under a default modality, which would pair it with another entry's slot and
-// shift the local index of every later entry sharing that label.
-//
-// The upstream handler fails the test if it runs: the guard has to reject before
-// the prefill call, not after the engine has been handed a body built on a guess.
+// The invariant guard at a step boundary. An entry with no Modality fails the
+// request instead of being grouped under a default modality, which would pair
+// it with another entry's slot and shift the local index of every later entry
+// sharing that label. The upstream handler fails the test if it runs: the guard
+// must reject before the prefill call, not after the engine has been handed a
+// body built on a guess.
 func TestPrefillStep_EntryWithoutModalityFails(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("prefill must not reach the upstream with an untagged entry")

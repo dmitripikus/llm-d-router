@@ -634,9 +634,8 @@ func TestEncodeStep_GenerateFormat_CapsSingleToken(t *testing.T) {
 
 // ---- multimodal encoder fanout ---------------------------------------------
 
-// TestCollectMediaParts_MixedModalities asserts the walker returns per-modality
-// lists of parts in walker order. Order within each modality is the original
-// request's discovery order for that modality.
+// The walker returns per-modality lists of parts in walker order; order within
+// a modality is that modality's discovery order in the request.
 func TestCollectMediaParts_MixedModalities(t *testing.T) {
 	body := map[string]any{
 		"messages": []any{
@@ -672,11 +671,10 @@ func TestCollectMediaParts_MixedModalities(t *testing.T) {
 	}
 }
 
-// TestCollectMediaParts_SkipsMalformedParts asserts that content parts
-// replace_media_urls silently skips (missing/null inner map, non-string
-// url, empty input_audio data) are also skipped here, so per-modality
-// indexing stays aligned with MultimodalEntries. Without this alignment,
-// a valid entry would pair with a malformed part in encode fanout.
+// Content parts replace_media_urls silently skips (missing/null inner map,
+// non-string url, empty input_audio data) must be skipped here too, so
+// per-modality indexing stays aligned with MultimodalEntries; otherwise a valid
+// entry pairs with a malformed part in the encode fanout.
 func TestCollectMediaParts_SkipsMalformedParts(t *testing.T) {
 	body := map[string]any{
 		"messages": []any{
@@ -721,8 +719,7 @@ func TestCollectMediaParts_SkipsMalformedParts(t *testing.T) {
 	}
 }
 
-// TestBuildSingleMediaContent_PerModality asserts each modality's content
-// part is emitted in its native OpenAI shape.
+// Each modality's content part is emitted in its native OpenAI shape.
 func TestBuildSingleMediaContent_PerModality(t *testing.T) {
 	partsByMod := map[string][]map[string]any{
 		ModalityImage: {
@@ -764,11 +761,10 @@ func TestBuildSingleMediaContent_PerModality(t *testing.T) {
 	}
 }
 
-// TestBuildSingleMediaContent_OutOfRangeErrors asserts an out-of-range
-// localIdx is an error rather than a stand-in content part. The path only
-// runs when entries and parts got out of line upstream, which is a
-// coordinator bug; there is nothing worth sending the encoder in that
-// case, and the error names the modality so the miss is traceable.
+// An out-of-range localIdx is an error rather than a stand-in content part.
+// The path only runs when entries and parts got out of line upstream, a
+// coordinator bug, so there is nothing worth sending the encoder; the error
+// names the modality to keep the miss traceable.
 func TestBuildSingleMediaContent_OutOfRangeErrors(t *testing.T) {
 	partsByMod := map[string][]map[string]any{
 		ModalityImage: {
@@ -800,10 +796,9 @@ func TestBuildSingleMediaContent_OutOfRangeErrors(t *testing.T) {
 	}
 }
 
-// TestEncodeStep_MissingMediaPartFails drives the full step with one more
-// entry than the request has media parts, the shape of an entry<->part
-// pairing bug. The fanout must fail instead of sending the encoder a
-// sub-request with no media in it.
+// Drives the full step with one more entry than the request has media parts,
+// the shape of an entry<->part pairing bug: the fanout must fail instead of
+// sending the encoder a sub-request with no media in it.
 func TestEncodeStep_MissingMediaPartFails(t *testing.T) {
 	// The well-formed entry may or may not reach the encoder before the
 	// broken one fails the group, so this only has to answer plausibly.
@@ -850,9 +845,9 @@ func TestEncodeStep_MissingMediaPartFails(t *testing.T) {
 	}
 }
 
-// fanoutPairing is what one encode sub-request says about the entry it was
-// built for: the single modality key under mm_hashes, the hash filed under
-// it, the content part's type, and the payload that part carries.
+// fanoutPairing is what one encode sub-request says about its entry: the single
+// modality key under mm_hashes, the hash under it, and the content part's type
+// and payload.
 type fanoutPairing struct {
 	modality string
 	hash     string
@@ -860,10 +855,9 @@ type fanoutPairing struct {
 	payload  string
 }
 
-// readFanoutPairing extracts the pairing a single encode sub-request body
-// asserts. A sub-request carries exactly one entry, so mm_hashes must hold
-// exactly one modality key with exactly one hash, and content exactly one
-// part. Anything else is itself a failure.
+// readFanoutPairing extracts the pairing a single encode sub-request asserts.
+// A sub-request carries exactly one entry, so mm_hashes must hold one modality
+// key with one hash and content exactly one part; anything else is a failure.
 func readFanoutPairing(t *testing.T, body map[string]any) fanoutPairing {
 	t.Helper()
 	tokens, _ := body["tokens"].(map[string]any)
@@ -903,9 +897,9 @@ func readFanoutPairing(t *testing.T, body map[string]any) fanoutPairing {
 }
 
 // captureFanout runs the encode step against a recording backend and returns
-// the pairing each sub-request carried, keyed by hash. Keying by hash is what
-// makes a mispairing visible: the hash names the entry the sub-request was
-// built for, so the part beside it must be that entry's part.
+// each sub-request's pairing, keyed by hash. That is what makes a mispairing
+// visible: the hash names the entry the sub-request was built for, so the part
+// beside it must be that entry's.
 func captureFanout(t *testing.T, reqCtx *pipeline.RequestContext) map[string]fanoutPairing {
 	t.Helper()
 	var mu sync.Mutex
@@ -959,13 +953,12 @@ func assertPairings(t *testing.T, got map[string]fanoutPairing, want []fanoutPai
 	}
 }
 
-// TestEncodeStep_MixedModalityFanout drives the full encode step with a
-// mixed-modality request. Each entry produces one fanout sub-request, and the
-// assertion is per sub-request: the hash, the modality key it sits under, and
-// the media bytes beside it must all belong to the same entry. Checking only
-// that every modality and every part type appeared somewhere across the
-// sub-requests would pass on any permutation of them, which is the failure
-// this guards (see mediaPartIsWellFormed).
+// Drives the full encode step with a mixed-modality request: each entry
+// produces one fanout sub-request, and the hash, the modality key it sits
+// under, and the media bytes beside it must all belong to the same entry.
+// Asserting only that every modality and part type appeared somewhere would
+// pass on any permutation of them, the failure this guards (see
+// mediaPartIsWellFormed).
 func TestEncodeStep_MixedModalityFanout(t *testing.T) {
 	reqCtx := &pipeline.RequestContext{
 		RequestID:    "mixed-fanout",
@@ -1001,12 +994,11 @@ func TestEncodeStep_MixedModalityFanout(t *testing.T) {
 	})
 }
 
-// TestEncodeStep_WithinModalityFanoutPairing covers the pairing case a
-// cross-modality test cannot reach: two audio entries in one request, one
-// carried as audio_url and one as input_audio. Both share the audio modality
-// key, so only the per-modality local index distinguishes them, and a request
-// mixing the two part types is the case where a local-index regression sends
-// one entry's hash with the other entry's bytes.
+// The pairing case a cross-modality test cannot reach: two audio entries in one
+// request, one carried as audio_url and one as input_audio. Both share the
+// audio modality key, so only the per-modality local index distinguishes them,
+// and mixing the two part types is where a local-index regression sends one
+// entry's hash with the other's bytes.
 func TestEncodeStep_WithinModalityFanoutPairing(t *testing.T) {
 	reqCtx := &pipeline.RequestContext{
 		RequestID:    "within-modality-fanout",
@@ -1044,14 +1036,13 @@ func TestEncodeStep_WithinModalityFanoutPairing(t *testing.T) {
 	})
 }
 
-// TestEncodeStep_EntryWithoutModalityFails is the encode counterpart of
-// TestPrefillStep_EntryWithoutModalityFails: it covers the validateEntryModalities
-// guard at this step's boundary, not the guard itself (utils_test.go does that).
-//
-// The generate format is deliberate. It takes the fanout down the branch that
-// needs no media part from the body, so without the guard the untagged entry
-// would be sent to the encoder under an empty mm_hashes key rather than stopped
-// by a later pairing failure. The upstream handler fails the test if it runs.
+// The encode counterpart of TestPrefillStep_EntryWithoutModalityFails: covers
+// the validateEntryModalities guard at this step's boundary, not the guard
+// itself (utils_test.go does that). The generate format is deliberate, taking
+// the fanout down the branch that needs no media part from the body, so without
+// the guard the untagged entry would reach the encoder under an empty mm_hashes
+// key rather than being stopped by a later pairing failure. The upstream
+// handler fails the test if it runs.
 func TestEncodeStep_EntryWithoutModalityFails(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("encode must not reach the upstream with an untagged entry")

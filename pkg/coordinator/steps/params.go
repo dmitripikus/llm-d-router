@@ -29,9 +29,8 @@ const (
 	ParamECConnector = "ec_connector"
 )
 
-// Modality* identify the kind of multimodal payload carried by a
-// MultimodalEntry and are used as the key into per-modality feature maps
-// (mm_hashes, mm_placeholders, kwargs_data). Values mirror EPP's canonical
+// Modality* identify a MultimodalEntry's payload kind and key the per-modality
+// feature maps (mm_hashes, mm_placeholders, kwargs_data). Values mirror EPP's
 // modality enum at pkg/epp/framework/interface/requesthandling/types.go.
 const (
 	ModalityImage = "image"
