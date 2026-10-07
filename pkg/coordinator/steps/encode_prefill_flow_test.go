@@ -27,6 +27,7 @@ import (
 	"sync"
 	"testing"
 
+	reqcommon "github.com/llm-d/llm-d-router/pkg/common/request"
 	"github.com/llm-d/llm-d-router/pkg/coordinator/config"
 	"github.com/llm-d/llm-d-router/pkg/coordinator/connectors/ec"
 	"github.com/llm-d/llm-d-router/pkg/coordinator/gateway"
@@ -81,7 +82,7 @@ func encodeSubRequestHash(t *testing.T, body []byte) (modality, hash string, ok 
 func newEncodePrefillGateway(t *testing.T, prefillBody *map[string]any, kvParams map[string]any, ecFor func(modality, hash string) map[string]any) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch phase := r.Header.Get(gateway.EPPProfileHeader); phase {
+		switch phase := r.Header.Get(reqcommon.EPPProfileHeaderKey); phase {
 		case gateway.PhaseEncode:
 			body, _ := io.ReadAll(r.Body)
 			modality, hash, ok := encodeSubRequestHash(t, body)
