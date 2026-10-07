@@ -462,8 +462,9 @@ func TestReplaceMediaURLsStep_EntriesMatchTheMediaPartWalk(t *testing.T) {
 	items := []any{map[string]any{"role": "user", "content": parts}}
 
 	// What the shared walk says the answer is, over the same body Execute reads.
-	var wantModalities []string
-	for _, media := range collectMediaParts(items, reqcommon.APITypeChatCompletions) {
+	walked := collectMediaParts(items, reqcommon.APITypeChatCompletions)
+	wantModalities := make([]string, 0, len(walked))
+	for _, media := range walked {
 		wantModalities = append(wantModalities, media.modality)
 	}
 	// Guard the guard: a fixture typo that made every part unrecognized would
