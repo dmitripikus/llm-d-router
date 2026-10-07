@@ -29,7 +29,6 @@ import (
 	logutil "github.com/llm-d/llm-d-router/pkg/common/observability/logging"
 	reqcommon "github.com/llm-d/llm-d-router/pkg/common/request"
 
-	"github.com/llm-d/llm-d-router/pkg/coordinator/common/httplog"
 	"github.com/llm-d/llm-d-router/pkg/coordinator/connectors/ec"
 	"github.com/llm-d/llm-d-router/pkg/coordinator/gateway"
 	coordmetrics "github.com/llm-d/llm-d-router/pkg/coordinator/metrics"
@@ -67,11 +66,7 @@ func NewEncodeStep(gwClient *gateway.Client, params map[string]any) (pipeline.St
 		}
 		maxParallel = v
 	}
-	ecName, err := paramString(params, ParamECConnector)
-	if err != nil {
-		return nil, fmt.Errorf("encode: %w", err)
-	}
-	ecConn, err := ec.Build(ecName)
+	ecConn, err := buildECConnector(params)
 	if err != nil {
 		return nil, fmt.Errorf("encode: %w", err)
 	}
@@ -109,21 +104,15 @@ func (s *EncodeStep) Execute(ctx context.Context, reqCtx *pipeline.RequestContex
 	responseHeaders := make([]http.Header, len(reqCtx.MultimodalEntries))
 
 	format := resolveFormat(s.useOpenAIFormat, reqCtx.OriginalPath)
-	var partsByMod map[string][]map[string]any
-	if format == reqcommon.APITypeChatCompletions {
-		partsByMod = collectMediaParts(reqCtx.Body)
+	var partsByMod map[string][]mediaPart
+	if items, ok := promptItems(reqCtx.Body, format); ok {
+		partsByMod = groupMediaPartsByModality(collectMediaParts(items, format))
 	}
 
-	// Per-modality running counter: entry i's local index is the number of
-	// earlier entries sharing its modality. Resolved up front so each
-	// sub-request carries its own coordinate; see mediaPartIsWellFormed for how
-	// entries and parts stay lined up.
-	localIdx := make([]int, len(reqCtx.MultimodalEntries))
-	modCounter := make(map[string]int)
-	for i, entry := range reqCtx.MultimodalEntries {
-		localIdx[i] = modCounter[entry.Modality]
-		modCounter[entry.Modality]++
-	}
+	// Entry i's local index is its position among the entries sharing its
+	// modality. Resolved up front so each sub-request carries its own
+	// coordinate; see collectMediaParts for how entries and parts stay lined up.
+	localIdx := modalityLocalIndexes(reqCtx.MultimodalEntries)
 
 	g, gCtx := errgroup.WithContext(ctx)
 	g.SetLimit(s.maxParallel)
@@ -159,17 +148,18 @@ func (s *EncodeStep) executeOne(
 	entry pipeline.MultimodalEntry,
 	localIdx int,
 	format reqcommon.APIType,
-	partsByMod map[string][]map[string]any,
+	partsByMod map[string][]mediaPart,
 ) (map[string]any, http.Header, error) {
+	logger = logger.WithValues("index", index)
+
 	body, err := s.buildEncodeBody(reqCtx, entry, localIdx, format, partsByMod)
 	if err != nil {
-		// Entries and parts got out of line upstream (see
-		// mediaPartIsWellFormed). Both come from the same request by the same
-		// rule, so this is a coordinator bug: fail rather than send the encoder
-		// a request known to be wrong.
+		// Entries and parts got out of line upstream (see collectMediaParts).
+		// Both come from the same request by the same rule, so this is a
+		// coordinator bug: fail rather than send the encoder a request known to
+		// be wrong.
 		err = fmt.Errorf("encode[%d]: %w", index, err)
 		logger.Error(err, "encode fanout entry has no media part",
-			"index", index,
 			"modality", entry.Modality,
 			"local_index", localIdx,
 			"parts_available", len(partsByMod[entry.Modality]))
@@ -178,43 +168,38 @@ func (s *EncodeStep) executeOne(
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
 		err = fmt.Errorf("encode[%d]: marshal: %w", index, err)
-		logger.Error(err, "encode fanout marshal", "index", index)
+		logger.Error(err, "encode fanout marshal")
 		return nil, nil, err
 	}
 
 	path := format.Path()
-	logger.V(logutil.DEFAULT).Info("sending sub-request", "index", index, "path", path)
-	headers := reqCtx.ForwardedHeaders()
-	headers[reqcommon.RequestIDHeaderKey] = reqCtx.RequestID
-	headers[gateway.EPPProfileHeader] = gateway.PhaseEncode
-	if v := logger.V(logutil.DEBUG); v.Enabled() {
-		v.Info("sub-request body", "index", index, "method", "POST", "path", path, "bodyLen", len(bodyBytes), "headers", httplog.RedactedHeaders(headers))
-	}
-
-	call := coordmetrics.StartUpstreamCall(coordmetrics.UpstreamEncode)
-	resp, err := s.gwClient.Post(ctx, path, bodyBytes, headers)
-	call.Done()
+	logger.V(logutil.DEFAULT).Info("sending sub-request", "path", path)
+	resp, err := postToGateway(ctx, logger, s.gwClient, gatewayRequest{
+		logMsg:   "sub-request body",
+		step:     fmt.Sprintf("%s[%d]", EncodeStepName, index),
+		upstream: coordmetrics.UpstreamEncode,
+		path:     path,
+		body:     bodyBytes,
+		headers:  gatewayHeaders(reqCtx, gateway.PhaseEncode),
+	})
 	if err != nil {
-		err = fmt.Errorf("encode[%d]: request: %w", index, err)
-		logger.Error(err, "encode fanout request", "index", index, "path", path)
+		var upstream *pipeline.UpstreamError
+		if errors.As(err, &upstream) {
+			logger.Error(err, "encode fanout status", "status", upstream.StatusCode)
+		} else {
+			logger.Error(err, "encode fanout request", "path", path)
+		}
 		return nil, nil, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		respBody := readErrorBody(resp.Body)
-		err := upstreamError(fmt.Sprintf("%s[%d]", EncodeStepName, index), resp.StatusCode, respBody)
-		logger.Error(err, "encode fanout status", "index", index, "status", resp.StatusCode)
-		return nil, nil, err
-	}
-
 	var encResp encodeResponse
 	if err := json.NewDecoder(resp.Body).Decode(&encResp); err != nil {
 		err = fmt.Errorf("encode[%d]: decode response: %w", index, err)
-		logger.Error(err, "encode fanout decode", "index", index)
+		logger.Error(err, "encode fanout decode")
 		return nil, nil, err
 	}
-	return coerceParamsMap(logger.WithValues("index", index), encResp.ECTransferParams, "ec_transfer_params"), resp.Header, nil
+	return coerceParamsMap(logger, encResp.ECTransferParams, "ec_transfer_params"), resp.Header, nil
 }
 
 func (s *EncodeStep) buildEncodeTokenIDs(fullTokenIDs []int, entry pipeline.MultimodalEntry) []int {
@@ -242,26 +227,33 @@ func (s *EncodeStep) buildEncodeTokenIDs(fullTokenIDs []int, entry pipeline.Mult
 // buildEncodeBody builds one fanout sub-request. localIdx is the entry's
 // position among the entries sharing its modality, resolved by Execute; the
 // modality itself comes off the entry.
-func (s *EncodeStep) buildEncodeBody(reqCtx *pipeline.RequestContext, entry pipeline.MultimodalEntry, localIdx int, format reqcommon.APIType, partsByMod map[string][]map[string]any) (map[string]any, error) {
+func (s *EncodeStep) buildEncodeBody(reqCtx *pipeline.RequestContext, entry pipeline.MultimodalEntry, localIdx int, format reqcommon.APIType, partsByMod map[string][]mediaPart) (map[string]any, error) {
 	mod := entry.Modality
 	switch format {
-	case reqcommon.APITypeChatCompletions:
-		mediaContent, err := buildSingleMediaContent(partsByMod, mod, localIdx)
-		if err != nil {
-			return nil, err
+	case reqcommon.APITypeChatCompletions, reqcommon.APITypeResponses:
+		// Neither failure below is ErrBadRequest. replace-media-urls builds the
+		// entries from this same walk and rejects a part with no payload as it
+		// goes (see collectMediaRefs), so a client request cannot reach either
+		// guard: both mean entries and parts got out of line inside the
+		// coordinator, which should surface as a 5xx rather than blame the
+		// caller. validateEntryModalities states the same rule for its field.
+		parts := partsByMod[mod]
+		if localIdx < 0 || localIdx >= len(parts) {
+			return nil, fmt.Errorf("no %s media part at index %d, request has %d", mod, localIdx, len(parts))
 		}
-		body := map[string]any{
-			"model": reqCtx.Model,
-			"messages": []any{
-				map[string]any{
-					"role":    "user",
-					"content": []any{mediaContent},
-				},
-			},
+		part := parts[localIdx].part
+		if !mediaPartCarriesPayload(part) {
+			return nil, fmt.Errorf("%s media part at index %d carries no media", mod, localIdx)
 		}
-		reqcommon.CapSingleToken(body, format)
-		return body, nil
+		// The part goes out unreshaped, so the options each API keeps beside
+		// the URL (Responses' detail sibling, chat's nested image_url fields,
+		// an input_audio format) come along without per-format copying.
+		return reqcommon.NewEncoderPrimingBody(reqCtx.Body, part, format), nil
 	case reqcommon.APITypeVLLMGenerate:
+		// Unlike the OpenAI formats, this body carries no image: the encoder
+		// preprocesses nothing, so the client's mm_processor_kwargs and
+		// media_io_kwargs have no effect here. Render already applied them and
+		// returned the result as entry.Hash and entry.KwargsData.
 		body := map[string]any{
 			"model":     reqCtx.Model,
 			"token_ids": s.buildEncodeTokenIDs(reqCtx.TokenIDs, entry),
@@ -282,61 +274,6 @@ func (s *EncodeStep) buildEncodeBody(reqCtx *pipeline.RequestContext, entry pipe
 		// silently sending a generate-shaped body to the wrong endpoint.
 		return nil, fmt.Errorf("unsupported request format %v", format)
 	}
-}
-
-// collectMediaParts walks the request messages once and returns the media parts
-// grouped by modality, each list in request order. Non-media parts (text,
-// tool_use, etc.) are skipped, as are parts failing mediaPartIsWellFormed; see
-// that function for how the grouping stays lined up with MultimodalEntries.
-// partTypeModality is the authoritative list of recognized media part types.
-func collectMediaParts(body map[string]any) map[string][]map[string]any {
-	messages, _ := body["messages"].([]any)
-	partsByMod := make(map[string][]map[string]any)
-	for _, msg := range messages {
-		msgMap, ok := msg.(map[string]any)
-		if !ok {
-			continue
-		}
-		content, ok := msgMap["content"].([]any)
-		if !ok {
-			continue
-		}
-		for _, part := range content {
-			partMap, ok := part.(map[string]any)
-			if !ok {
-				continue
-			}
-			partType, _ := partMap["type"].(string)
-			modality, isMedia := partTypeModality[partType]
-			if !isMedia {
-				continue
-			}
-			if !mediaPartIsWellFormed(partMap, partType) {
-				continue
-			}
-			partsByMod[modality] = append(partsByMod[modality], partMap)
-		}
-	}
-	return partsByMod
-}
-
-// buildSingleMediaContent returns the OpenAI content-part for the entry at
-// (modality, localIdx) in the per-modality parts map, verbatim in its native
-// shape {type: <partType>, <partType>: <innerMap>}, ready to drop into an
-// encode sub-request's messages[0].content slice. An out-of-range localIdx
-// means entries and parts got out of line (see mediaPartIsWellFormed) and is an
-// error, since the part holds the bytes the encoder is asked to encode.
-func buildSingleMediaContent(partsByMod map[string][]map[string]any, modality string, localIdx int) (map[string]any, error) {
-	parts := partsByMod[modality]
-	if localIdx < 0 || localIdx >= len(parts) {
-		return nil, fmt.Errorf("no %s media part at index %d, request has %d", modality, localIdx, len(parts))
-	}
-	p := parts[localIdx]
-	partType, _ := p["type"].(string)
-	return map[string]any{
-		"type":   partType,
-		partType: p[partType],
-	}, nil
 }
 
 type encodeResponse struct {

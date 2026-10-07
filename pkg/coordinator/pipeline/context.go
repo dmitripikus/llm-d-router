@@ -116,6 +116,9 @@ func (rc *RequestContext) CaptureResponseHeaders(responses ...http.Header) {
 }
 
 // RequestContext carries all state for a single request through the pipeline.
+//
+// OriginalBody is never re-marshalled from Body, so a step reading it after
+// another step has mutated Body sees the payload as the client sent it.
 type RequestContext struct {
 	RequestID          string
 	RevisionDecisionID string
@@ -161,7 +164,7 @@ type RequestContext struct {
 //
 // An entry's position in this slice means nothing on its own: steps pair an
 // entry with its content part by counting entries of the same Modality. See
-// steps.mediaPartIsWellFormed for the invariant that keeps the two lined up.
+// steps.collectMediaParts for the invariant that keeps the two lined up.
 type MultimodalEntry struct {
 	Modality    string
 	Hash        string

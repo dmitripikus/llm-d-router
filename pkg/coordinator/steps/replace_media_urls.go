@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	logutil "github.com/llm-d/llm-d-router/pkg/common/observability/logging"
+	reqcommon "github.com/llm-d/llm-d-router/pkg/common/request"
 
 	"github.com/llm-d/llm-d-router/pkg/coordinator/config"
 	"github.com/llm-d/llm-d-router/pkg/coordinator/gateway"
@@ -44,69 +45,6 @@ import (
 )
 
 const ReplaceMediaURLsStepName = "replace-media-urls"
-
-// OpenAI chat content-part types the coordinator recognizes as multimodal.
-// URL-based parts carry a `url` that may be an https URL or a data URI;
-// input_audio is always inline: `data` (base64) + `format` (codec name).
-const (
-	imageURLPartType   = "image_url"
-	audioURLPartType   = "audio_url"
-	videoURLPartType   = "video_url"
-	inputAudioPartType = "input_audio"
-)
-
-// partTypeModality maps each recognized content-part type to its Modality. A
-// type absent here (text, tool_use, image_embeds, unknown) passes through.
-var partTypeModality = map[string]string{
-	imageURLPartType:   ModalityImage,
-	audioURLPartType:   ModalityAudio,
-	videoURLPartType:   ModalityVideo,
-	inputAudioPartType: ModalityAudio,
-}
-
-// classifyMediaPart extracts the fields replace_media_urls needs from a media
-// content part into a partially filled mediaRef (the caller supplies msgIdx and
-// partIdx). partType must already be a known media type; modality is what
-// partTypeModality maps it to, and reason names a miss for a log.
-//
-// A missing field is reported through ok, not an error: skipping the part is
-// the contract, and a caller that failed where the others skip would break the
-// pairing mediaPartIsWellFormed describes. That wrapper delegates here for its
-// yes/no answer, so every walker accepts and rejects the same parts.
-func classifyMediaPart(partMap map[string]any, partType, modality string) (ref mediaRef, ok bool, reason string) {
-	inner, isObject := partMap[partType].(map[string]any)
-	if !isObject {
-		return mediaRef{}, false, "inner object missing or wrong type"
-	}
-	if partType == inputAudioPartType {
-		data, _ := inner["data"].(string)
-		if data == "" {
-			return mediaRef{}, false, "data is empty or not a string"
-		}
-		format, _ := inner["format"].(string)
-		return mediaRef{modality: modality, isInline: true, data: data, format: format}, true, ""
-	}
-	// URL-based parts: image_url, audio_url, video_url.
-	url, isString := inner["url"].(string)
-	if !isString {
-		return mediaRef{}, false, "url is missing or not a string"
-	}
-	return mediaRef{modality: modality, url: url, urlMap: inner}, true, ""
-}
-
-// mediaPartIsWellFormed reports whether partMap carries the fields
-// replace_media_urls needs to produce a MultimodalEntry for it.
-//
-// How entries and parts stay lined up: one entry per part that passes this
-// check, in request order. The later walkers (encode.collectMediaParts, the
-// encode fanout, decode.injectUUIDs) apply the same check in the same order and
-// pair the Nth entry of a modality with its Nth part, so a part dropped here
-// but kept there attaches the wrong bytes to the wrong entry. Hence the
-// delegation to classifyMediaPart: one rule, one implementation.
-func mediaPartIsWellFormed(partMap map[string]any, partType string) bool {
-	_, ok, _ := classifyMediaPart(partMap, partType, partTypeModality[partType])
-	return ok
-}
 
 const defaultContentType = "application/octet-stream"
 
@@ -254,47 +192,17 @@ func (s *ReplaceMediaURLsStep) Name() string { return ReplaceMediaURLsStepName }
 func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.RequestContext) error {
 	logger := log.FromContext(ctx).WithName(ReplaceMediaURLsStepName)
 
-	messages, ok := reqCtx.Body["messages"].([]any)
-	if !ok {
-		return nil
-	}
-
-	// Collect every media part into one slice, tagged by kind, in request
+	// Collect every media part into one slice, tagged by modality, in request
 	// order. That order is what pairs entries with parts later (see
-	// mediaPartIsWellFormed); two passes over URL and inline parts would
-	// reorder audio whenever a request mixes audio_url and input_audio.
+	// collectMediaParts); two passes over URL and inline parts would reorder
+	// audio whenever a request mixes audio_url and input_audio.
 	var refs []mediaRef
-	for msgIdx, msg := range messages {
-		msgMap, ok := msg.(map[string]any)
-		if !ok {
-			continue
-		}
-		content, ok := msgMap["content"].([]any)
-		if !ok {
-			continue
-		}
-		for partIdx, part := range content {
-			partMap, ok := part.(map[string]any)
-			if !ok {
-				continue
-			}
-			partType, _ := partMap["type"].(string)
-			modality, isMedia := partTypeModality[partType]
-			if !isMedia {
-				continue
-			}
-			ref, ok, reason := classifyMediaPart(partMap, partType, modality)
-			if !ok {
-				// Info, not DEBUG: the part passes through and the request
-				// still succeeds, so this is the only signal that a client's
-				// media part was not downloaded. V(0) shows at any verbosity.
-				logger.Info("skipping malformed media part",
-					"reason", reason, "msg_index", msgIdx, "part_index", partIdx, "part_type", partType)
-				continue
-			}
-			ref.msgIdx = msgIdx
-			ref.partIdx = partIdx
-			refs = append(refs, ref)
+	apiType := reqcommon.DetectAPIType(reqCtx.OriginalPath)
+	if items, ok := promptItems(reqCtx.Body, apiType); ok {
+		var err error
+		refs, err = collectMediaRefs(items, apiType)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -345,14 +253,14 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 			// nothing to rewrite and nothing worth retaining.
 			contentType, b64, err := parseDataURI(ref.url)
 			if err != nil {
-				return fmt.Errorf("parsing data URI at message %d part %d: %w: %w", ref.msgIdx, ref.partIdx, err, pipeline.ErrBadRequest)
+				return fmt.Errorf("parsing data URI at %s: %w: %w", ref.location, err, pipeline.ErrBadRequest)
 			}
 			if !s.allowedContentTypeForModality(contentType, ref.modality) {
-				return fmt.Errorf("data URI content type %q not allowed for %s at message %d part %d: %w", contentType, ref.modality, ref.msgIdx, ref.partIdx, pipeline.ErrBadRequest)
+				return fmt.Errorf("data URI content type %q not allowed for %s at %s: %w", contentType, ref.modality, ref.location, pipeline.ErrBadRequest)
 			}
 			if s.enforceInlineSize(ref.modality) && s.inlineSizeExceeded(b64, ref.modality) {
-				return fmt.Errorf("data URI at message %d part %d exceeds size limit for %s: %w",
-					ref.msgIdx, ref.partIdx, ref.modality, pipeline.ErrBadRequest)
+				return fmt.Errorf("data URI at %s exceeds size limit for %s: %w",
+					ref.location, ref.modality, pipeline.ErrBadRequest)
 			}
 			continue
 		}
@@ -360,7 +268,7 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 		g.Go(func() error {
 			data, contentType, err := s.download(gCtx, ref.url, ref.modality)
 			if err != nil {
-				return fmt.Errorf("downloading %s at message %d part %d: %w", ref.url, ref.msgIdx, ref.partIdx, err)
+				return fmt.Errorf("downloading %s at %s: %w", ref.url, ref.location, err)
 			}
 			// Encode the final data URI here rather than stashing base64 for
 			// the walker pass to wrap: holding both the payload and the URI
@@ -385,17 +293,76 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 	}
 
 	// Walk refs in request order: rewrite URL slots in place and append one
-	// entry per ref. That order is the point; see mediaPartIsWellFormed.
+	// entry per ref. That order is the point; see collectMediaParts.
 	for i, ref := range refs {
 		// A non-empty slot is exactly a downloaded ref. Inline refs and refs
 		// that were already data URIs have their payload in the body already.
 		if dataURIs[i] != "" {
-			ref.urlMap["url"] = dataURIs[i]
+			ref.setURL(dataURIs[i])
 		}
 		appendMultimodalEntry(reqCtx, ref.modality)
 	}
 
 	return nil
+}
+
+// collectMediaRefs returns a ref per media content part, in walk order.
+//
+// A part that carries no usable media is rejected rather than skipped. encode
+// and decode pair the same walk with reqCtx.MultimodalEntries by position
+// within a modality, so a part skipped here would shift every later part of
+// that modality onto another part's hash. Rejecting also keeps the failure at
+// the edge: the alternative is an encoder primed from a part it cannot fetch,
+// under a hash the prefiller then looks up and misses.
+//
+// What counts as usable differs by part type. A URL-based part needs a readable
+// URL to download or inline. An input_audio part carries its payload in the
+// body instead, so it needs the base64 data; its format, MIME and size are
+// validated by validateInlineAudio, which Execute runs before any download.
+func collectMediaRefs(items []any, apiType reqcommon.APIType) ([]mediaRef, error) {
+	var refs []mediaRef
+	for _, media := range collectMediaParts(items, apiType) {
+		partType, _ := media.part[reqcommon.FieldType].(string)
+		if partType == reqcommon.PartTypeInputAudio {
+			ref, err := inlineAudioRef(media)
+			if err != nil {
+				return nil, err
+			}
+			refs = append(refs, ref)
+			continue
+		}
+		url, setURL := reqcommon.MediaPartURLRef(media.part)
+		if setURL == nil || url == "" {
+			return nil, fmt.Errorf("%s: %s part carries no fetchable URL: %w",
+				media.location, media.modality, pipeline.ErrBadRequest)
+		}
+		refs = append(refs, mediaRef{
+			location: media.location,
+			modality: media.modality,
+			url:      url,
+			setURL:   setURL,
+		})
+	}
+	return refs, nil
+}
+
+// inlineAudioRef builds the ref for an input_audio part, whose payload sits in
+// the request body rather than behind a URL: "data" holds the base64 audio and
+// "format" names the codec. Both are read here so Execute can check them
+// before it starts any download.
+func inlineAudioRef(media mediaPart) (mediaRef, error) {
+	data, format, ok := inlineAudioData(media.part)
+	if !ok {
+		return mediaRef{}, fmt.Errorf("%s: input_audio part carries no base64 data: %w",
+			media.location, pipeline.ErrBadRequest)
+	}
+	return mediaRef{
+		location: media.location,
+		modality: media.modality,
+		isInline: true,
+		data:     data,
+		format:   format,
+	}, nil
 }
 
 // validateInlineAudio checks one input_audio ref: a recognized format name, a
@@ -405,20 +372,18 @@ func (s *ReplaceMediaURLsStep) Execute(ctx context.Context, reqCtx *pipeline.Req
 func (s *ReplaceMediaURLsStep) validateInlineAudio(ref mediaRef) error {
 	contentType, err := audioFormatToMIME(ref.format)
 	if err != nil {
-		return fmt.Errorf("input_audio at message %d part %d: %w: %w",
-			ref.msgIdx, ref.partIdx, err, pipeline.ErrBadRequest)
+		return fmt.Errorf("input_audio at %s: %w: %w", ref.location, err, pipeline.ErrBadRequest)
 	}
 	if !s.allowedContentTypeForModality(contentType, ref.modality) {
 		// Name the format alongside its MIME: the allowlist is written in
 		// MIMEs and the request in formats, so the MIME alone does not say
 		// which format was refused.
-		return fmt.Errorf("input_audio format %q (content type %q) not allowed at message %d part %d: %w",
-			ref.format, contentType, ref.msgIdx, ref.partIdx, pipeline.ErrBadRequest)
+		return fmt.Errorf("input_audio format %q (content type %q) not allowed at %s: %w",
+			ref.format, contentType, ref.location, pipeline.ErrBadRequest)
 	}
 	// input_audio is capped by the audio modality.
 	if s.inlineSizeExceeded(ref.data, ref.modality) {
-		return fmt.Errorf("input_audio at message %d part %d exceeds size limit: %w",
-			ref.msgIdx, ref.partIdx, pipeline.ErrBadRequest)
+		return fmt.Errorf("input_audio at %s exceeds size limit: %w", ref.location, pipeline.ErrBadRequest)
 	}
 	return nil
 }
@@ -501,9 +466,8 @@ func (s *ReplaceMediaURLsStep) download(ctx context.Context, rawURL, modality st
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		respBody := readErrorBody(resp.Body)
-		return nil, "", upstreamError(ReplaceMediaURLsStepName, resp.StatusCode, respBody)
+	if err := checkStatus(ReplaceMediaURLsStepName, resp); err != nil {
+		return nil, "", err
 	}
 
 	// Normalize before the fallback, so a header that is only parameters
@@ -537,20 +501,25 @@ func (s *ReplaceMediaURLsStep) download(ctx context.Context, rawURL, modality st
 
 // mediaRef locates one media content part in the request body. isInline
 // discriminates the two variants: a URL-based part (image_url / audio_url /
-// video_url) fills url + urlMap, the inner map carrying "url", so the download
-// result can be inlined in place; an input_audio part fills data + format, its
-// payload already in the body and needing only MIME and size validation.
+// video_url / input_image) fills url + setURL, so the download result can be
+// inlined in place; an input_audio part fills data + format, its payload
+// already in the body and needing only MIME and size validation.
 //
 // Refs are collected in request order, part of how entries and parts stay
-// lined up; see mediaPartIsWellFormed.
+// lined up; see collectMediaParts.
 type mediaRef struct {
-	msgIdx   int
-	partIdx  int
+	// location names where this ref's part sits in the client body, for error
+	// messages: "message 0 content part 2", "input item 1 output part 0".
+	location string
 	modality string
 	isInline bool
 	// URL variant:
-	url    string
-	urlMap map[string]any
+	url string
+	// setURL writes the rewritten data URI back to wherever this ref's URL
+	// lives in reqCtx.Body, since that location's shape differs by API
+	// format (chat-completions nests it at image_url.url; Responses stores
+	// it as a bare string field on the part itself).
+	setURL func(string)
 	// Inline variant:
 	data   string // base64 payload
 	format string // "wav", "mp3", ...

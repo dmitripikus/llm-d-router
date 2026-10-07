@@ -17,10 +17,12 @@ limitations under the License.
 package steps
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math"
+	"net/http"
 	"sort"
 
 	"github.com/go-logr/logr"
@@ -28,6 +30,9 @@ import (
 	logutil "github.com/llm-d/llm-d-router/pkg/common/observability/logging"
 	reqcommon "github.com/llm-d/llm-d-router/pkg/common/request"
 
+	"github.com/llm-d/llm-d-router/pkg/coordinator/common/httplog"
+	"github.com/llm-d/llm-d-router/pkg/coordinator/gateway"
+	coordmetrics "github.com/llm-d/llm-d-router/pkg/coordinator/metrics"
 	"github.com/llm-d/llm-d-router/pkg/coordinator/pipeline"
 )
 
@@ -45,6 +50,58 @@ func readErrorBody(r io.Reader) []byte {
 // server can map an upstream 4xx to a client error and a 5xx to a gateway fault.
 func upstreamError(step string, statusCode int, body []byte) error {
 	return &pipeline.UpstreamError{Step: step, StatusCode: statusCode, Body: string(body)}
+}
+
+// gatewayHeaders returns a fresh map per call, so the caller may modify it.
+func gatewayHeaders(reqCtx *pipeline.RequestContext, phase string) map[string]string {
+	headers := reqCtx.ForwardedHeaders()
+	headers[reqcommon.RequestIDHeaderKey] = reqCtx.RequestID
+	headers[gateway.EPPProfileHeader] = phase
+	return headers
+}
+
+// checkStatus returns a pipeline.UpstreamError tagged with step when the status
+// of resp is other than 200. A non-200 consumes up to maxErrorBodySize of the
+// body; a 200 leaves it unread. Closing stays with the caller.
+func checkStatus(step string, resp *http.Response) error {
+	if resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	return upstreamError(step, resp.StatusCode, readErrorBody(resp.Body))
+}
+
+// gatewayRequest is the parameter of a POST that a step sends to the gateway.
+type gatewayRequest struct {
+	// logMsg is the message of the DEBUG request record.
+	logMsg string
+	// step tags the errors.
+	step string
+	// upstream labels the call's metrics.
+	upstream string
+	path     string
+	body     []byte
+	headers  map[string]string
+}
+
+// postToGateway sends req to the gateway and returns the response. On success
+// the caller closes the response body. An error returns a nil response, with
+// the body already closed when the status was other than 200.
+func postToGateway(ctx context.Context, logger logr.Logger, gwClient *gateway.Client, req gatewayRequest) (*http.Response, error) {
+	if v := logger.V(logutil.DEBUG); v.Enabled() {
+		v.Info(req.logMsg, "method", "POST", "path", req.path, "bodyLen", len(req.body), "headers", httplog.RedactedHeaders(req.headers))
+	}
+
+	call := coordmetrics.StartUpstreamCall(req.upstream)
+	resp, err := gwClient.Post(ctx, req.path, req.body, req.headers)
+	call.Done()
+	if err != nil {
+		return nil, fmt.Errorf("%s: request: %w", req.step, err)
+	}
+	if err := checkStatus(req.step, resp); err != nil {
+		_ = resp.Body.Close()
+		return nil, err
+	}
+	return resp, nil
 }
 
 // parseUseOpenAIFormat reads the use_openai_format step parameter, defaulting to
@@ -79,20 +136,186 @@ func unreachableFormatError(format reqcommon.APIType) error {
 }
 
 // resolveFormat maps a request path to the wire format a step emits. The steps
-// build only Completions, Chat Completions, and generate bodies, so any other
-// API collapses to APITypeVLLMGenerate; Chat Completions additionally requires
-// useOpenAIFormat. Generate is the fallback because its body carries the prompt
-// as reqCtx.TokenIDs and does not depend on the client's request shape.
+// build only Completions, Chat Completions, Responses, and generate bodies, so
+// any other API collapses to APITypeVLLMGenerate; Chat Completions and
+// Responses additionally require useOpenAIFormat. Generate is the fallback
+// because its body carries the prompt as reqCtx.TokenIDs and does not depend
+// on the client's request shape.
 func resolveFormat(useOpenAIFormat bool, path string) reqcommon.APIType {
 	switch detected := reqcommon.DetectAPIType(path); detected {
 	case reqcommon.APITypeCompletions:
 		return detected
-	case reqcommon.APITypeChatCompletions:
+	case reqcommon.APITypeChatCompletions, reqcommon.APITypeResponses:
 		if useOpenAIFormat {
 			return detected
 		}
 	}
 	return reqcommon.APITypeVLLMGenerate
+}
+
+// promptItems returns the array an API carries its prompt items in: a
+// chat-completions messages array, or a Responses input array. ok is false for
+// an API that carries no item array, and for a body whose field is absent or
+// holds something other than an array.
+func promptItems(body map[string]any, apiType reqcommon.APIType) ([]any, bool) {
+	var field string
+	switch apiType {
+	case reqcommon.APITypeChatCompletions:
+		field = reqcommon.FieldMessages
+	case reqcommon.APITypeResponses:
+		field = reqcommon.FieldInput
+	default:
+		return nil, false
+	}
+	items, ok := body[field].([]any)
+	return items, ok
+}
+
+// partModality reports the Modality a content part of type partType names on a
+// request to apiType. ok is false for a part type that names no media, which
+// the walkers pass over (text, tool_use, image_embeds, unknown).
+//
+// A chat-completions request may name an image either way: vLLM's chat parser
+// primes input_image and image_url through the same content part map, so an
+// input_image on a chat request reaches the model and has to be walked. It
+// alone also carries the audio and video part types, inline or by URL.
+//
+// A Responses request names an image input_image only, and names no audio or
+// video at all: its input content union is input_text / input_image /
+// input_file, so a Responses request carrying any of the others fails the model
+// server's input validation before a worker sees it. Collecting one would build
+// an entry whose placeholder tokens no worker ever produces. The sidecar's
+// encoder fan-out applies the same rule.
+func partModality(partType string, apiType reqcommon.APIType) (modality string, ok bool) {
+	if partType == reqcommon.PartTypeInputImage {
+		return ModalityImage, true
+	}
+	if apiType == reqcommon.APITypeResponses {
+		return "", false
+	}
+	switch partType {
+	case reqcommon.PartTypeImageURL:
+		return ModalityImage, true
+	case reqcommon.PartTypeAudioURL, reqcommon.PartTypeInputAudio:
+		return ModalityAudio, true
+	case reqcommon.PartTypeVideoURL:
+		return ModalityVideo, true
+	}
+	return "", false
+}
+
+// mediaPart is a media content part together with the modality it names and the
+// body position it was found at, the latter for error messages: "message 0
+// content part 2", "input item 1 output part 0".
+type mediaPart struct {
+	part     map[string]any
+	modality string
+	location string
+}
+
+// collectMediaParts walks a chat-completions messages array or a Responses
+// input array and returns the media content parts in order.
+//
+// Every step that pairs reqCtx.MultimodalEntries with parts by position walks
+// from here: replace-media-urls builds the entries, encode picks the part to
+// prime, and decode stamps the hash. They agree because they see the same parts
+// in the same order, so a second walk elsewhere would reintroduce the chance to
+// disagree. Walking once also lets the encode fan-out index by position instead
+// of re-walking per entry (O(N*M) -> O(N+M)).
+//
+// Parts are returned whenever the type names a modality, with no check that the
+// part carries usable media: replace-media-urls rejects an unusable one as it
+// builds the entries (see collectMediaRefs), so filtering here would instead
+// let one through and shift every later part of its modality onto another
+// part's hash. Which part types count is partModality's rule.
+func collectMediaParts(items []any, apiType reqcommon.APIType) []mediaPart {
+	itemLabel := "message"
+	if apiType == reqcommon.APITypeResponses {
+		itemLabel = "input item"
+	}
+
+	var parts []mediaPart
+	for itemIdx, item := range items {
+		itemMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, array := range reqcommon.ItemPartArrays(itemMap, apiType) {
+			for partIdx, part := range array.Parts {
+				partMap, ok := part.(map[string]any)
+				if !ok {
+					continue
+				}
+				partType, _ := partMap[reqcommon.FieldType].(string)
+				modality, ok := partModality(partType, apiType)
+				if !ok {
+					continue
+				}
+				parts = append(parts, mediaPart{
+					part:     partMap,
+					modality: modality,
+					location: fmt.Sprintf("%s %d %s part %d", itemLabel, itemIdx, array.Field, partIdx),
+				})
+			}
+		}
+	}
+	return parts
+}
+
+// inlineAudioData reads the payload of an input_audio content part, whose audio
+// sits in the request body rather than behind a URL: "data" holds the base64
+// audio and "format" names the codec. ok is false when there is no base64 data
+// to encode, the inline counterpart of reqcommon.MediaPartURLRef reporting no
+// URL. format is returned unchecked, since what names a codec is the audio
+// allowlist's business (see audioFormatToMIME).
+func inlineAudioData(part map[string]any) (data, format string, ok bool) {
+	inner, isObject := part[reqcommon.PartTypeInputAudio].(map[string]any)
+	if !isObject {
+		return "", "", false
+	}
+	data, _ = inner["data"].(string)
+	if data == "" {
+		return "", "", false
+	}
+	format, _ = inner["format"].(string)
+	return data, format, true
+}
+
+// mediaPartCarriesPayload reports whether a media content part still carries
+// the media it names: a readable URL for a URL-based part, base64 data for an
+// inline input_audio part. replace-media-urls rejects a part carrying neither
+// as it builds the entries (see collectMediaRefs), so a step checking a part it
+// reached by position is being defensive.
+func mediaPartCarriesPayload(part map[string]any) bool {
+	if partType, _ := part[reqcommon.FieldType].(string); partType == reqcommon.PartTypeInputAudio {
+		_, _, ok := inlineAudioData(part)
+		return ok
+	}
+	return reqcommon.MediaPartURL(part) != ""
+}
+
+// groupMediaPartsByModality indexes a collectMediaParts walk by modality, each
+// list keeping the walk's order. Entries pair with parts within a modality, so
+// this is the shape a step indexes by an entry's per-modality position.
+func groupMediaPartsByModality(parts []mediaPart) map[string][]mediaPart {
+	byMod := make(map[string][]mediaPart)
+	for _, p := range parts {
+		byMod[p.modality] = append(byMod[p.modality], p)
+	}
+	return byMod
+}
+
+// modalityLocalIndexes returns, for each entry, its position among the entries
+// sharing its modality. That position is the entry's coordinate into the
+// per-modality part lists and the per-modality render response slots.
+func modalityLocalIndexes(entries []pipeline.MultimodalEntry) []int {
+	local := make([]int, len(entries))
+	counter := make(map[string]int)
+	for i, entry := range entries {
+		local[i] = counter[entry.Modality]
+		counter[entry.Modality]++
+	}
+	return local
 }
 
 // buildMMFeatures builds the multimodal features map (mm_hashes, mm_placeholders,

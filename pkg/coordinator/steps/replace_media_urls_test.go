@@ -29,17 +29,20 @@ import (
 	"sync/atomic"
 	"testing"
 
+	reqcommon "github.com/llm-d/llm-d-router/pkg/common/request"
+
 	"github.com/llm-d/llm-d-router/pkg/coordinator/config"
 	"github.com/llm-d/llm-d-router/pkg/coordinator/pipeline"
 )
 
 // MIME literals reused across tests. Extracted so goconst does not flag
 // their repetition and so a rename or typo lands in one place.
+// image/jpeg is not declared here: conditional_decode_test.go already names
+// that value testImageJPEGContentType, and this package shares one test scope.
 const (
-	testAudioWAVMIME  = "audio/wav"
-	testImagePNGMIME  = "image/png"
-	testImageJPEGMIME = "image/jpeg"
-	testVideoMP4MIME  = "video/mp4"
+	testAudioWAVMIME = "audio/wav"
+	testImagePNGMIME = "image/png"
+	testVideoMP4MIME = "video/mp4"
 )
 
 // newLoopbackStep builds a step whose SSRF guard permits loopback. httptest
@@ -58,7 +61,7 @@ func newLoopbackStep(t *testing.T, params map[string]any) *ReplaceMediaURLsStep 
 
 func TestReplaceMediaURLsStep_DownloadsAndInlines(t *testing.T) {
 	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", testImageJPEGMIME)
+		w.Header().Set("Content-Type", testImageJPEGContentType)
 		_, _ = w.Write([]byte("jpeg-bytes"))
 	}))
 	defer imageServer.Close()
@@ -66,6 +69,7 @@ func TestReplaceMediaURLsStep_DownloadsAndInlines(t *testing.T) {
 	step := newLoopbackStep(t, map[string]any{"download_timeout": "5s"})
 
 	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathChatCompletions,
 		Body: map[string]any{
 			"messages": []any{
 				map[string]any{
@@ -95,8 +99,136 @@ func TestReplaceMediaURLsStep_DownloadsAndInlines(t *testing.T) {
 	content := msgs[0].(map[string]any)["content"].([]any)
 	imgPart := content[1].(map[string]any)["image_url"].(map[string]any)
 	url := imgPart["url"].(string)
-	if url[:len("data:image/jpeg;base64,")] != "data:image/jpeg;base64," {
+	if !strings.HasPrefix(url, "data:image/jpeg;base64,") {
 		t.Fatalf("expected data URI, got %s", url)
+	}
+}
+
+func TestReplaceMediaURLsStep_Responses_DownloadsAndInlines(t *testing.T) {
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", testImageJPEGContentType)
+		_, _ = w.Write([]byte("jpeg-bytes"))
+	}))
+	defer imageServer.Close()
+
+	step := newLoopbackStep(t, map[string]any{"download_timeout": "5s"})
+
+	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathResponses,
+		Body: map[string]any{
+			"input": []any{
+				map[string]any{
+					"role": "user",
+					"content": []any{
+						map[string]any{"type": "input_text", "text": "describe this"},
+						map[string]any{
+							"type":      "input_image",
+							"image_url": imageServer.URL + "/photo.jpg",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := step.Execute(context.Background(), reqCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(reqCtx.MultimodalEntries) != 1 {
+		t.Fatalf("expected 1 multimodal entry, got %d", len(reqCtx.MultimodalEntries))
+	}
+	// The downloaded bytes stay in the body as a data URI (asserted below)
+	// rather than on the entry, so the modality is all the entry carries here.
+	if got := reqCtx.MultimodalEntries[0].Modality; got != ModalityImage {
+		t.Fatalf("entry modality = %q, want %q", got, ModalityImage)
+	}
+
+	input := reqCtx.Body["input"].([]any)
+	content := input[0].(map[string]any)["content"].([]any)
+	url := content[1].(map[string]any)["image_url"].(string)
+	if !strings.HasPrefix(url, "data:image/jpeg;base64,") {
+		t.Fatalf("expected data URI, got %s", url)
+	}
+}
+
+// See collectMediaRefs' doc comment for why a file_id-referenced image is
+// rejected rather than skipped.
+func TestReplaceMediaURLsStep_Responses_RejectsFileIDImage(t *testing.T) {
+	step, _ := NewReplaceMediaURLsStep(nil, map[string]any{})
+
+	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathResponses,
+		Body: map[string]any{
+			"input": []any{
+				map[string]any{
+					"role": "user",
+					"content": []any{
+						map[string]any{"type": "input_text", "text": "describe this"},
+						map[string]any{"type": "input_image", "file_id": "file-abc123"},
+					},
+				},
+			},
+		},
+	}
+
+	err := step.Execute(context.Background(), reqCtx)
+	if err == nil {
+		t.Fatal("expected error for input_image part with no image_url string")
+	}
+	if !errors.Is(err, pipeline.ErrBadRequest) {
+		t.Fatalf("expected ErrBadRequest, got %v", err)
+	}
+	if len(reqCtx.MultimodalEntries) != 0 {
+		t.Fatalf("expected no entries populated on rejection, got %d", len(reqCtx.MultimodalEntries))
+	}
+}
+
+// A chat-completions request carrying a stray top-level "input" array must not
+// have that field's image processed.
+func TestReplaceMediaURLsStep_IgnoresStrayInputOnChatCompletions(t *testing.T) {
+	var hits atomic.Int32
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write([]byte("jpeg-bytes"))
+	}))
+	defer imageServer.Close()
+
+	step := newLoopbackStep(t, map[string]any{})
+
+	strayImageURL := imageServer.URL + "/stray.jpg"
+	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathChatCompletions,
+		Body: map[string]any{
+			"messages": []any{
+				map[string]any{"role": "user", "content": "just text"},
+			},
+			"input": []any{
+				map[string]any{
+					"role": "user",
+					"content": []any{
+						map[string]any{"type": "input_image", "image_url": strayImageURL},
+					},
+				},
+			},
+		},
+	}
+
+	if err := step.Execute(context.Background(), reqCtx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("expected the stray input array's image to never be fetched, got %d hits", hits.Load())
+	}
+	if len(reqCtx.MultimodalEntries) != 0 {
+		t.Fatalf("expected 0 multimodal entries, got %d", len(reqCtx.MultimodalEntries))
+	}
+	input := reqCtx.Body["input"].([]any)
+	part := input[0].(map[string]any)["content"].([]any)[0].(map[string]any)
+	if part["image_url"] != strayImageURL {
+		t.Fatalf("expected stray input's image_url left untouched, got %v", part["image_url"])
 	}
 }
 
@@ -104,6 +236,7 @@ func TestReplaceMediaURLsStep_NoImages(t *testing.T) {
 	step, _ := NewReplaceMediaURLsStep(nil, map[string]any{})
 
 	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathChatCompletions,
 		Body: map[string]any{
 			"messages": []any{
 				map[string]any{"role": "user", "content": "just text"},
@@ -129,6 +262,7 @@ func TestReplaceMediaURLsStep_DownloadFailure(t *testing.T) {
 	step := newLoopbackStep(t, map[string]any{})
 
 	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathChatCompletions,
 		Body: map[string]any{
 			"messages": []any{
 				map[string]any{
@@ -165,6 +299,7 @@ func TestReplaceMediaURLsStep_DataURIInput(t *testing.T) {
 
 	const dataURI = "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
 	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathChatCompletions,
 		Body: map[string]any{
 			"messages": []any{
 				map[string]any{
@@ -240,7 +375,7 @@ func TestReplaceMediaURLsStep_UppercaseDataURIScheme(t *testing.T) {
 // One MultimodalEntry must be appended per media part, in request order,
 // whether the part came from a download or an inline data: URI. The encode
 // fanout and decode.injectUUIDs pair the Nth entry of a modality with its Nth
-// part (see mediaPartIsWellFormed), so drift here attaches the wrong bytes to
+// part (see collectMediaParts), so drift here attaches the wrong bytes to
 // the wrong entry. Asserted in both source orderings.
 func TestReplaceMediaURLsStep_MixedHTTPAndDataURIOrdering(t *testing.T) {
 	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -277,6 +412,7 @@ func TestReplaceMediaURLsStep_MixedHTTPAndDataURIOrdering(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			step := newLoopbackStep(t, map[string]any{})
 			reqCtx := &pipeline.RequestContext{
+				OriginalPath: reqcommon.PathChatCompletions,
 				Body: map[string]any{
 					"messages": []any{
 						map[string]any{"role": "user", "content": tt.parts},
@@ -304,53 +440,42 @@ func TestReplaceMediaURLsStep_MixedHTTPAndDataURIOrdering(t *testing.T) {
 	}
 }
 
-// Execute and mediaPartIsWellFormed must agree on exactly which parts count.
+// Execute and collectMediaParts must agree on exactly which parts count.
 // Execute fixes the entry order the encode fanout and decode.injectUUIDs index
-// into, and those two use the predicate, so a part accepted by one and rejected
-// by the other shifts the pairing. Both delegate to classifyMediaPart; this
-// asserts the agreement end to end rather than trusting the delegation, over
-// every malformed shape and every recognized part type.
-func TestReplaceMediaURLsStep_ExecuteAgreesWithWellFormedPredicate(t *testing.T) {
+// into, and those two walk with collectMediaParts, so a part counted by one and
+// not the other shifts the pairing. Asserted end to end over every recognized
+// part type rather than by trusting the shared walk.
+func TestReplaceMediaURLsStep_EntriesMatchTheMediaPartWalk(t *testing.T) {
 	parts := []any{
 		map[string]any{"type": "text", "text": "hi"},
-		// image_url: one good, then every way to be malformed.
-		map[string]any{"type": imageURLPartType, imageURLPartType: map[string]any{"url": "data:image/png;base64,aGk="}},
-		map[string]any{"type": imageURLPartType},
-		map[string]any{"type": imageURLPartType, imageURLPartType: map[string]any{}},
-		map[string]any{"type": imageURLPartType, imageURLPartType: map[string]any{"url": 123}},
-		// audio_url, including a non-object inner.
-		map[string]any{"type": audioURLPartType, audioURLPartType: map[string]any{"url": "data:audio/wav;base64,aGk="}},
-		map[string]any{"type": audioURLPartType, audioURLPartType: "not-an-object"},
+		map[string]any{"type": reqcommon.PartTypeImageURL, reqcommon.PartTypeImageURL: map[string]any{"url": "data:image/png;base64,aGk="}},
+		map[string]any{"type": reqcommon.PartTypeAudioURL, reqcommon.PartTypeAudioURL: map[string]any{"url": "data:audio/wav;base64,aGk="}},
 		// input_audio is inline, carrying its payload under data, not url.
-		map[string]any{"type": inputAudioPartType, inputAudioPartType: map[string]any{"data": "aGk=", "format": "wav"}},
-		map[string]any{"type": inputAudioPartType, inputAudioPartType: map[string]any{"data": "", "format": "wav"}},
-		map[string]any{"type": inputAudioPartType, inputAudioPartType: map[string]any{"format": "wav"}},
-		map[string]any{"type": videoURLPartType, videoURLPartType: map[string]any{"url": "data:video/mp4;base64,aGk="}},
+		map[string]any{"type": reqcommon.PartTypeInputAudio, reqcommon.PartTypeInputAudio: map[string]any{"data": "aGk=", "format": "wav"}},
+		map[string]any{"type": reqcommon.PartTypeVideoURL, reqcommon.PartTypeVideoURL: map[string]any{"url": "data:video/mp4;base64,aGk="}},
+		// A chat request names an image either way (see partModality).
+		map[string]any{"type": reqcommon.PartTypeInputImage, reqcommon.FieldImageURL: "data:image/png;base64,aGk="},
 		// Recognized by neither: passed through untouched.
 		map[string]any{"type": "image_embeds", "image_embeds": map[string]any{}},
 	}
 
-	// What the predicate says the answer is, walking the same body Execute does.
+	items := []any{map[string]any{"role": "user", "content": parts}}
+
+	// What the shared walk says the answer is, over the same body Execute reads.
 	var wantModalities []string
-	for _, part := range parts {
-		partMap := part.(map[string]any)
-		partType, _ := partMap["type"].(string)
-		modality, isMedia := partTypeModality[partType]
-		if isMedia && mediaPartIsWellFormed(partMap, partType) {
-			wantModalities = append(wantModalities, modality)
-		}
+	for _, media := range collectMediaParts(items, reqcommon.APITypeChatCompletions) {
+		wantModalities = append(wantModalities, media.modality)
 	}
-	// Guard the guard: a typo that made every part malformed would otherwise
-	// let this test pass with both sides at zero.
-	if len(wantModalities) != 4 {
-		t.Fatalf("fixture drift: predicate accepted %d parts, want 4 (%v)", len(wantModalities), wantModalities)
+	// Guard the guard: a fixture typo that made every part unrecognized would
+	// otherwise let this test pass with both sides at zero.
+	if len(wantModalities) != 5 {
+		t.Fatalf("fixture drift: the walk collected %d parts, want 5 (%v)", len(wantModalities), wantModalities)
 	}
 
 	step, _ := NewReplaceMediaURLsStep(nil, map[string]any{})
 	reqCtx := &pipeline.RequestContext{
-		Body: map[string]any{
-			"messages": []any{map[string]any{"role": "user", "content": parts}},
-		},
+		OriginalPath: reqcommon.PathChatCompletions,
+		Body:         map[string]any{"messages": items},
 	}
 	if err := step.Execute(context.Background(), reqCtx); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -361,7 +486,100 @@ func TestReplaceMediaURLsStep_ExecuteAgreesWithWellFormedPredicate(t *testing.T)
 		gotModalities = append(gotModalities, e.Modality)
 	}
 	if !equalStringSlices(gotModalities, wantModalities) {
-		t.Errorf("Execute produced modalities %v, predicate expects %v", gotModalities, wantModalities)
+		t.Errorf("Execute produced modalities %v, the walk expects %v", gotModalities, wantModalities)
+	}
+}
+
+// A media part the step cannot resolve fails the request, for every recognized
+// part type and every way of being unusable. Skipping one instead would shift
+// every later part of its modality onto another part's hash downstream, which
+// is why collectMediaRefs rejects rather than skips. Each case puts a
+// well-formed part of the same modality after the broken one, the shape that
+// would be mispaired.
+func TestReplaceMediaURLsStep_RejectsUnusableMediaPart(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		broken map[string]any
+		good   map[string]any
+	}{
+		{
+			name:   "image_url inner missing",
+			broken: map[string]any{"type": reqcommon.PartTypeImageURL},
+			good:   map[string]any{"type": reqcommon.PartTypeImageURL, reqcommon.PartTypeImageURL: map[string]any{"url": "data:image/png;base64,aGk="}},
+		},
+		{
+			name:   "image_url inner not an object",
+			broken: map[string]any{"type": reqcommon.PartTypeImageURL, reqcommon.PartTypeImageURL: "not-an-object"},
+			good:   map[string]any{"type": reqcommon.PartTypeImageURL, reqcommon.PartTypeImageURL: map[string]any{"url": "data:image/png;base64,aGk="}},
+		},
+		{
+			name:   "image_url url absent",
+			broken: map[string]any{"type": reqcommon.PartTypeImageURL, reqcommon.PartTypeImageURL: map[string]any{}},
+			good:   map[string]any{"type": reqcommon.PartTypeImageURL, reqcommon.PartTypeImageURL: map[string]any{"url": "data:image/png;base64,aGk="}},
+		},
+		{
+			name:   "image_url url not a string",
+			broken: map[string]any{"type": reqcommon.PartTypeImageURL, reqcommon.PartTypeImageURL: map[string]any{"url": 123}},
+			good:   map[string]any{"type": reqcommon.PartTypeImageURL, reqcommon.PartTypeImageURL: map[string]any{"url": "data:image/png;base64,aGk="}},
+		},
+		{
+			name:   "image_url url empty",
+			broken: map[string]any{"type": reqcommon.PartTypeImageURL, reqcommon.PartTypeImageURL: map[string]any{"url": ""}},
+			good:   map[string]any{"type": reqcommon.PartTypeImageURL, reqcommon.PartTypeImageURL: map[string]any{"url": "data:image/png;base64,aGk="}},
+		},
+		{
+			name:   "input_image url not a string",
+			broken: map[string]any{"type": reqcommon.PartTypeInputImage, reqcommon.FieldImageURL: map[string]any{"url": "x"}},
+			good:   map[string]any{"type": reqcommon.PartTypeInputImage, reqcommon.FieldImageURL: "data:image/png;base64,aGk="},
+		},
+		{
+			name:   "audio_url inner not an object",
+			broken: map[string]any{"type": reqcommon.PartTypeAudioURL, reqcommon.PartTypeAudioURL: "not-an-object"},
+			good:   map[string]any{"type": reqcommon.PartTypeAudioURL, reqcommon.PartTypeAudioURL: map[string]any{"url": "data:audio/wav;base64,aGk="}},
+		},
+		{
+			name:   "video_url url absent",
+			broken: map[string]any{"type": reqcommon.PartTypeVideoURL, reqcommon.PartTypeVideoURL: map[string]any{}},
+			good:   map[string]any{"type": reqcommon.PartTypeVideoURL, reqcommon.PartTypeVideoURL: map[string]any{"url": "data:video/mp4;base64,aGk="}},
+		},
+		{
+			name:   "input_audio inner missing",
+			broken: map[string]any{"type": reqcommon.PartTypeInputAudio},
+			good:   map[string]any{"type": reqcommon.PartTypeInputAudio, reqcommon.PartTypeInputAudio: map[string]any{"data": "aGk=", "format": "wav"}},
+		},
+		{
+			name:   "input_audio data empty",
+			broken: map[string]any{"type": reqcommon.PartTypeInputAudio, reqcommon.PartTypeInputAudio: map[string]any{"data": "", "format": "wav"}},
+			good:   map[string]any{"type": reqcommon.PartTypeInputAudio, reqcommon.PartTypeInputAudio: map[string]any{"data": "aGk=", "format": "wav"}},
+		},
+		{
+			name:   "input_audio data absent",
+			broken: map[string]any{"type": reqcommon.PartTypeInputAudio, reqcommon.PartTypeInputAudio: map[string]any{"format": "wav"}},
+			good:   map[string]any{"type": reqcommon.PartTypeInputAudio, reqcommon.PartTypeInputAudio: map[string]any{"data": "aGk=", "format": "wav"}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			step, _ := NewReplaceMediaURLsStep(nil, map[string]any{})
+			reqCtx := &pipeline.RequestContext{
+				OriginalPath: reqcommon.PathChatCompletions,
+				Body: map[string]any{
+					"messages": []any{
+						map[string]any{"role": "user", "content": []any{tc.broken, tc.good}},
+					},
+				},
+			}
+
+			err := step.Execute(context.Background(), reqCtx)
+			if err == nil {
+				t.Fatal("expected the unusable media part to fail the request")
+			}
+			if !errors.Is(err, pipeline.ErrBadRequest) {
+				t.Fatalf("expected ErrBadRequest, got %v", err)
+			}
+			if len(reqCtx.MultimodalEntries) != 0 {
+				t.Fatalf("expected no entries on rejection, got %d", len(reqCtx.MultimodalEntries))
+			}
+		})
 	}
 }
 
@@ -409,8 +627,8 @@ func TestReplaceMediaURLsStep_InputAudio_HugeCapStillAccepts(t *testing.T) {
 					"role": "user",
 					"content": []any{
 						map[string]any{
-							"type":             inputAudioPartType,
-							inputAudioPartType: map[string]any{"data": "aGk=", "format": "wav"},
+							"type":                       reqcommon.PartTypeInputAudio,
+							reqcommon.PartTypeInputAudio: map[string]any{"data": "aGk=", "format": "wav"},
 						},
 					},
 				},
@@ -469,7 +687,7 @@ func TestParseDataURI(t *testing.T) {
 		{
 			name:        "jpeg base64",
 			uri:         "data:image/jpeg;base64,/9j/4AAQ",
-			wantType:    testImageJPEGMIME,
+			wantType:    testImageJPEGContentType,
 			wantPayload: "/9j/4AAQ",
 		},
 		{
@@ -548,6 +766,7 @@ func TestReplaceMediaURLsStep_RejectsTooManyEntries(t *testing.T) {
 	}
 
 	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathChatCompletions,
 		Body: map[string]any{
 			"messages": []any{
 				map[string]any{
@@ -597,6 +816,7 @@ func TestReplaceMediaURLsStep_AllowsAtLimit(t *testing.T) {
 	step := newLoopbackStep(t, map[string]any{"max_multimodal_entries": 2})
 
 	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathChatCompletions,
 		Body: map[string]any{
 			"messages": []any{
 				map[string]any{
@@ -628,6 +848,7 @@ func TestReplaceMediaURLsStep_MultipleImages(t *testing.T) {
 	step := newLoopbackStep(t, map[string]any{})
 
 	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathChatCompletions,
 		Body: map[string]any{
 			"messages": []any{
 				map[string]any{
@@ -709,6 +930,29 @@ func TestReplaceMediaURLsStep_MalformedBody(t *testing.T) {
 				},
 			},
 		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			step, _ := NewReplaceMediaURLsStep(nil, map[string]any{})
+			reqCtx := &pipeline.RequestContext{OriginalPath: reqcommon.PathChatCompletions, Body: tt.body}
+			if err := step.Execute(context.Background(), reqCtx); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(reqCtx.MultimodalEntries) != 0 {
+				t.Fatalf("expected 0 multimodal entries, got %d", len(reqCtx.MultimodalEntries))
+			}
+		})
+	}
+}
+
+// TestReplaceMediaURLsStep_RejectsMalformedImageURLPart locks in that
+// collectMediaRefs rejects a malformed image_url part rather than silently
+// skipping it; see its doc comment for why.
+func TestReplaceMediaURLsStep_RejectsMalformedImageURLPart(t *testing.T) {
+	tests := []struct {
+		name string
+		body map[string]any
+	}{
 		{
 			name: "image_url field not a map",
 			body: map[string]any{
@@ -733,20 +977,55 @@ func TestReplaceMediaURLsStep_MalformedBody(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			step, _ := NewReplaceMediaURLsStep(nil, map[string]any{})
-			reqCtx := &pipeline.RequestContext{Body: tt.body}
-			if err := step.Execute(context.Background(), reqCtx); err != nil {
-				t.Fatalf("unexpected error: %v", err)
+			reqCtx := &pipeline.RequestContext{OriginalPath: reqcommon.PathChatCompletions, Body: tt.body}
+			err := step.Execute(context.Background(), reqCtx)
+			if err == nil {
+				t.Fatal("expected error for malformed image_url part")
+			}
+			if !errors.Is(err, pipeline.ErrBadRequest) {
+				t.Fatalf("expected ErrBadRequest, got %v", err)
 			}
 			if len(reqCtx.MultimodalEntries) != 0 {
-				t.Fatalf("expected 0 multimodal entries, got %d", len(reqCtx.MultimodalEntries))
+				t.Fatalf("expected no entries populated on rejection, got %d", len(reqCtx.MultimodalEntries))
 			}
 		})
+	}
+}
+
+// TestReplaceMediaURLsStep_RejectsMixedMalformedAndValidImageParts covers the
+// concrete failure collectMediaRefs's doc comment describes:
+// skipping the malformed part instead of rejecting it would leave the valid
+// image's hash misassigned to the malformed part.
+func TestReplaceMediaURLsStep_RejectsMixedMalformedAndValidImageParts(t *testing.T) {
+	step, _ := NewReplaceMediaURLsStep(nil, map[string]any{})
+	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathChatCompletions,
+		Body: map[string]any{
+			"messages": []any{
+				map[string]any{"role": "user", "content": []any{
+					map[string]any{"type": "image_url", "image_url": "http://bad/a.png"},
+					map[string]any{"type": "image_url", "image_url": map[string]any{"url": "http://good/b.png"}},
+				}},
+			},
+		},
+	}
+
+	err := step.Execute(context.Background(), reqCtx)
+	if err == nil {
+		t.Fatal("expected error for the malformed part")
+	}
+	if !errors.Is(err, pipeline.ErrBadRequest) {
+		t.Fatalf("expected ErrBadRequest, got %v", err)
+	}
+	if len(reqCtx.MultimodalEntries) != 0 {
+		t.Fatalf("expected no entries populated on rejection, got %d", len(reqCtx.MultimodalEntries))
 	}
 }
 
 func TestReplaceMediaURLsStep_InvalidDataURI(t *testing.T) {
 	step, _ := NewReplaceMediaURLsStep(nil, map[string]any{})
 	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathChatCompletions,
 		Body: map[string]any{
 			"messages": []any{
 				map[string]any{
@@ -780,6 +1059,7 @@ func TestReplaceMediaURLsStep_EmptyContentType(t *testing.T) {
 
 	step := newLoopbackStep(t, map[string]any{})
 	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathChatCompletions,
 		Body: map[string]any{
 			"messages": []any{
 				map[string]any{
@@ -815,6 +1095,7 @@ func TestReplaceMediaURLsStep_DownloadUnreachable(t *testing.T) {
 
 	step := newLoopbackStep(t, map[string]any{})
 	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathChatCompletions,
 		Body: map[string]any{
 			"messages": []any{
 				map[string]any{
@@ -888,6 +1169,7 @@ func TestReplaceMediaURLsStep_RejectsOversizedBody(t *testing.T) {
 	step := newLoopbackStep(t, map[string]any{"max_download_size": 1})
 
 	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathChatCompletions,
 		Body: map[string]any{
 			"messages": []any{
 				map[string]any{
@@ -943,6 +1225,7 @@ func TestReplaceMediaURLsStep_AllowsBodyAtCap(t *testing.T) {
 
 	step := newLoopbackStep(t, map[string]any{"max_download_size": capMB})
 	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathChatCompletions,
 		Body: map[string]any{
 			"messages": []any{
 				map[string]any{
@@ -986,6 +1269,7 @@ func TestReplaceMediaURLsStep_RejectsOneOversizedAmongMany(t *testing.T) {
 
 	step := newLoopbackStep(t, map[string]any{"max_download_size": 1})
 	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathChatCompletions,
 		Body: map[string]any{
 			"messages": []any{
 				map[string]any{
@@ -1259,6 +1543,7 @@ func TestReplaceMediaURLsStep_RejectsNonListAllowedDomains(t *testing.T) {
 func TestReplaceMediaURLsStep_RejectsNonImageDataURI(t *testing.T) {
 	step, _ := NewReplaceMediaURLsStep(nil, map[string]any{})
 	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathChatCompletions,
 		Body: map[string]any{
 			"messages": []any{
 				map[string]any{
@@ -1285,6 +1570,7 @@ func TestReplaceMediaURLsStep_RejectsNonImageDataURI(t *testing.T) {
 func TestReplaceMediaURLsStep_RejectsMissingMediaType(t *testing.T) {
 	step, _ := NewReplaceMediaURLsStep(nil, map[string]any{})
 	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathChatCompletions,
 		Body: map[string]any{
 			"messages": []any{
 				map[string]any{
@@ -1313,6 +1599,7 @@ func TestReplaceMediaURLsStep_CancelledContextSkipsDataURIParse(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathChatCompletions,
 		Body: map[string]any{
 			"messages": []any{
 				map[string]any{
@@ -1715,7 +2002,7 @@ func TestReplaceMediaURLsStep_ImageURL_PermissiveContentType(t *testing.T) {
 // into the rewritten data URI and the lockdown is a no-op on the HTTP path.
 func TestReplaceMediaURLsStep_ImageURL_ExplicitAllowlistAppliesToDownload(t *testing.T) {
 	jpegServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", testImageJPEGMIME)
+		w.Header().Set("Content-Type", testImageJPEGContentType)
 		_, _ = w.Write([]byte("jpeg-bytes"))
 	}))
 	defer jpegServer.Close()
@@ -2258,7 +2545,7 @@ func TestReplaceMediaURLsStep_MixedImageAudioVideo(t *testing.T) {
 	mediaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, ".jpg"):
-			w.Header().Set("Content-Type", testImageJPEGMIME)
+			w.Header().Set("Content-Type", testImageJPEGContentType)
 			_, _ = w.Write([]byte("jpg-bytes"))
 		case strings.HasSuffix(r.URL.Path, ".wav"):
 			w.Header().Set("Content-Type", testAudioWAVMIME)
@@ -2375,16 +2662,17 @@ func TestReplaceMediaURLsStep_MixedAudio_WalkerOrder(t *testing.T) {
 	// order, so entries[0] (inline) must pair with partsByMod[audio][0] and
 	// entries[1] (URL) with partsByMod[audio][1]. A regression that swaps the
 	// entries would break this pairing silently.
-	partsByMod := collectMediaParts(reqCtx.Body)
+	items, _ := promptItems(reqCtx.Body, reqcommon.APITypeChatCompletions)
+	partsByMod := groupMediaPartsByModality(collectMediaParts(items, reqcommon.APITypeChatCompletions))
 	audioParts := partsByMod[ModalityAudio]
 	if got := len(audioParts); got != 2 {
 		t.Fatalf("partsByMod[audio] len = %d, want 2", got)
 	}
-	if _, ok := audioParts[0]["input_audio"].(map[string]any); !ok {
-		t.Errorf("audio parts[0] = %+v, want the input_audio part first", audioParts[0])
+	if _, ok := audioParts[0].part["input_audio"].(map[string]any); !ok {
+		t.Errorf("audio parts[0] = %+v, want the input_audio part first", audioParts[0].part)
 	}
-	if _, ok := audioParts[1]["audio_url"].(map[string]any); !ok {
-		t.Errorf("audio parts[1] = %+v, want the audio_url part second", audioParts[1])
+	if _, ok := audioParts[1].part["audio_url"].(map[string]any); !ok {
+		t.Errorf("audio parts[1] = %+v, want the audio_url part second", audioParts[1].part)
 	}
 }
 
@@ -2769,5 +3057,208 @@ func TestParsePerModalityContentTypes_DoesNotAliasDefaults(t *testing.T) {
 	}
 	if _, leaked := defaultAllowedContentTypesByModality[ModalityImage][poison]; leaked {
 		t.Fatal("mutation of first result reached package-level defaults")
+	}
+}
+
+// TestReplaceMediaURLsStep_ChatCompletionsInputImage covers an input_image part
+// sent on a chat-completions request. vLLM's chat parser primes input_image and
+// image_url through the same content part map, so such a part reaches the model
+// and has to be fetched under this step's address guard and size limit rather
+// than left for the model server to fetch itself. The sidecar's encoder fan-out
+// collects it for the same reason.
+//
+// The URL sits where a Responses input_image keeps it, a bare string on the
+// part, even though the request is chat completions, so this also pins that the
+// rewritten data URI goes back in that shape.
+func TestReplaceMediaURLsStep_ChatCompletionsInputImage(t *testing.T) {
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", testImageJPEGContentType)
+		_, _ = w.Write([]byte("jpeg-bytes"))
+	}))
+	defer imageServer.Close()
+
+	step := newLoopbackStep(t, map[string]any{"download_timeout": "5s"})
+
+	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathChatCompletions,
+		Body: map[string]any{
+			"messages": []any{
+				map[string]any{
+					"role": "user",
+					"content": []any{
+						map[string]any{"type": "text", "text": "describe this"},
+						map[string]any{
+							"type":      reqcommon.PartTypeInputImage,
+							"image_url": imageServer.URL + "/photo.jpg",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if err := step.Execute(context.Background(), reqCtx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(reqCtx.MultimodalEntries) != 1 {
+		t.Fatalf("expected the input_image part to produce 1 multimodal entry, got %d", len(reqCtx.MultimodalEntries))
+	}
+	if got := reqCtx.MultimodalEntries[0].Modality; got != ModalityImage {
+		t.Errorf("entry modality = %q, want %q", got, ModalityImage)
+	}
+
+	msgs := reqCtx.Body["messages"].([]any)
+	content := msgs[0].(map[string]any)["content"].([]any)
+	url, ok := content[1].(map[string]any)[reqcommon.FieldImageURL].(string)
+	if !ok {
+		t.Fatalf("expected image_url to stay a bare string, got %T", content[1].(map[string]any)[reqcommon.FieldImageURL])
+	}
+	if !strings.HasPrefix(url, "data:image/jpeg;base64,") {
+		t.Errorf("expected the URL rewritten as a data URI, got %q", url)
+	}
+}
+
+// A chat-completions message defines no output array, so an image_url part
+// under one names content the client never sent and is left alone.
+func TestReplaceMediaURLsStep_IgnoresOutputOnChatCompletions(t *testing.T) {
+	var hits atomic.Int32
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", testImageJPEGContentType)
+		_, _ = w.Write([]byte("jpeg-bytes"))
+	}))
+	defer imageServer.Close()
+
+	step := newLoopbackStep(t, map[string]any{"download_timeout": "5s"})
+
+	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathChatCompletions,
+		Body: map[string]any{
+			"messages": []any{
+				map[string]any{
+					"role": "user",
+					"output": []any{
+						map[string]any{
+							"type":      reqcommon.PartTypeImageURL,
+							"image_url": map[string]any{"url": imageServer.URL + "/stray.jpg"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if err := step.Execute(context.Background(), reqCtx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := hits.Load(); got != 0 {
+		t.Fatalf("expected no download for an output array on a chat request, got %d", got)
+	}
+	if len(reqCtx.MultimodalEntries) != 0 {
+		t.Fatalf("expected no multimodal entries, got %d", len(reqCtx.MultimodalEntries))
+	}
+}
+
+// TestReplaceMediaURLsStep_Responses_InlinesFunctionCallOutputImage covers a
+// Responses function_call_output, which carries its parts under output rather
+// than content. vLLM forwards that array as a tool message's content, so media
+// in it reaches the model like any other part and has to be fetched under this
+// step's address guard and size limit rather than left for the model server to
+// fetch itself.
+func TestReplaceMediaURLsStep_Responses_InlinesFunctionCallOutputImage(t *testing.T) {
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", testImageJPEGContentType)
+		_, _ = w.Write([]byte("jpeg-bytes"))
+	}))
+	defer imageServer.Close()
+
+	step := newLoopbackStep(t, map[string]any{"download_timeout": "5s"})
+
+	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathResponses,
+		Body: map[string]any{
+			"input": []any{
+				map[string]any{
+					"role": "user",
+					"content": []any{
+						map[string]any{"type": "input_text", "text": "describe this"},
+						map[string]any{"type": reqcommon.PartTypeInputImage, "image_url": imageServer.URL + "/content.jpg"},
+					},
+				},
+				map[string]any{
+					"type":    "function_call_output",
+					"call_id": "call-1",
+					"output": []any{
+						map[string]any{"type": reqcommon.PartTypeInputImage, "image_url": imageServer.URL + "/output.jpg"},
+					},
+				},
+			},
+		},
+	}
+
+	if err := step.Execute(context.Background(), reqCtx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(reqCtx.MultimodalEntries) != 2 {
+		t.Fatalf("expected 2 multimodal entries, got %d", len(reqCtx.MultimodalEntries))
+	}
+
+	input := reqCtx.Body["input"].([]any)
+	contentURL := input[0].(map[string]any)["content"].([]any)[1].(map[string]any)["image_url"].(string)
+	if !strings.HasPrefix(contentURL, "data:image/jpeg;base64,") {
+		t.Fatalf("expected the content image inlined, got %s", contentURL)
+	}
+	outputURL := input[1].(map[string]any)["output"].([]any)[0].(map[string]any)["image_url"].(string)
+	if !strings.HasPrefix(outputURL, "data:image/jpeg;base64,") {
+		t.Fatalf("expected the output image inlined, got %s", outputURL)
+	}
+}
+
+// TestReplaceMediaURLsStep_ResponsesIgnoresChatImagePart is the other half of
+// partModality's rule. The Responses input union does not define image_url, so a
+// request carrying one fails the model server's input validation and no worker
+// sees it. Collecting it here would download an image the request never uses
+// and leave an entry the render service reports no hash for, failing the
+// request on the feature count instead.
+func TestReplaceMediaURLsStep_ResponsesIgnoresChatImagePart(t *testing.T) {
+	var hits atomic.Int32
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", testImageJPEGContentType)
+		_, _ = w.Write([]byte("jpeg-bytes"))
+	}))
+	defer imageServer.Close()
+
+	step := newLoopbackStep(t, map[string]any{"download_timeout": "5s"})
+
+	reqCtx := &pipeline.RequestContext{
+		OriginalPath: reqcommon.PathResponses,
+		Body: map[string]any{
+			"input": []any{
+				map[string]any{
+					"role": "user",
+					"content": []any{
+						map[string]any{"type": "input_text", "text": "describe this"},
+						map[string]any{
+							"type":      reqcommon.PartTypeImageURL,
+							"image_url": map[string]any{"url": imageServer.URL + "/photo.jpg"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if err := step.Execute(context.Background(), reqCtx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(reqCtx.MultimodalEntries) != 0 {
+		t.Errorf("expected no multimodal entry for a chat image part on a Responses request, got %d", len(reqCtx.MultimodalEntries))
+	}
+	if n := hits.Load(); n != 0 {
+		t.Errorf("expected no download, got %d", n)
 	}
 }
