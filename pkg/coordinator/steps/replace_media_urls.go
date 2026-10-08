@@ -614,7 +614,7 @@ func (s *ReplaceMediaURLsStep) allowedDownloadContentType(contentType string, mo
 // enforceDownloadContentType reports whether the per-modality allowlist is
 // applied to the Content-Type an HTTP origin returned; data URIs are always
 // checked, so this governs the download path only. Audio and video always,
-// for the reason recorded on coordinator.yaml's max_audio_download_size;
+// for the reason recorded on coordinator.yaml's allowed_audio_content_types;
 // images only when allowed_image_content_types is set explicitly, and that
 // param's comment there records why unset leaves them unchecked. An origin
 // sending no Content-Type lands on defaultContentType, which

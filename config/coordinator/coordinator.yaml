@@ -336,8 +336,8 @@ pipeline:
         # all, while setting the param reads as a deliberate lockdown and covers
         # both paths. Audio and video downloads are always checked, and they
         # tolerate an unlabeled origin for this same reason; what they refuse is
-        # a type that is positively wrong. See max_audio_download_size for why
-        # they are checked at all.
+        # a type that is positively wrong. See allowed_audio_content_types for
+        # why they are checked at all.
         # Default: image/jpeg, image/png, image/gif, image/webp.
         # allowed_image_content_types:
         #   - image/jpeg
