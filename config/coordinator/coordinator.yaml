@@ -94,7 +94,7 @@ server:
   # in the body verbatim and are not subject to replace-media-urls.max_download_size.
   # Deployments that also accept inline audio or video (input_audio parts, or
   # data:audio/data:video URIs in audio_url/video_url slots) may need much more:
-  # a 100 MB video inlines as ~135 MB of base64 in the body.
+  # base64 inflates by 4/3, so a 100 MB video inlines as ~133 MB in the body.
   # A text-only deployment can set a much smaller value. Megabytes; default 64.
   # env: COORDINATOR_SERVER_MAX_REQUEST_BODY_SIZE
   # max_request_body_size: 64
@@ -237,12 +237,14 @@ pipeline:
         # override it. Default 10 MB.
         #
         # Peak memory is per REQUEST, not per concurrent download: every payload
-        # is retained until the step returns, so this step alone holds
+        # is retained until the step returns. Base64 inflates by 4/3, so this
+        # step alone holds
         #
-        #   (media parts in the request) x (that modality's cap) x ~1.4
+        #   (media parts in the request) x (that modality's cap) x 4/3
         #
         # for the base64 form the payload is inlined as, plus up to
-        # max_concurrent_downloads x cap x ~2.4 for downloads still in flight.
+        # max_concurrent_downloads x cap x 7/3 for downloads still in flight,
+        # which hold the raw bytes and their encoded copy at the same time.
         # max_concurrent_downloads throttles how fast bytes arrive, not how many
         # are held at once.
         #
@@ -254,8 +256,8 @@ pipeline:
         # max_parallel). Size the memory limit for several times that figure.
         #
         # So max_multimodal_entries is the limit that actually bounds this:
-        # 8 parts x 10 MB is ~110 MB in this step, while 8 parts at
-        # max_video_download_size: 200 is ~2.2 GB here and multiples of that
+        # 8 parts x 10 MB is ~107 MB in this step, while 8 parts at
+        # max_video_download_size: 200 is ~2.1 GB here and multiples of that
         # across the pipeline. Raise a per-modality cap below only together with
         # max_multimodal_entries.
         #
