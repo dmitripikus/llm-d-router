@@ -334,8 +334,10 @@ pipeline:
         # default is enforced on data URIs only, because plenty of origins serve
         # a valid image as application/octet-stream or with no Content-Type at
         # all, while setting the param reads as a deliberate lockdown and covers
-        # both paths. Audio and video downloads are always checked; see
-        # max_audio_download_size for why they are treated more strictly.
+        # both paths. Audio and video downloads are always checked, and they
+        # tolerate an unlabeled origin for this same reason; what they refuse is
+        # a type that is positively wrong. See max_audio_download_size for why
+        # they are checked at all.
         # Default: image/jpeg, image/png, image/gif, image/webp.
         # allowed_image_content_types:
         #   - image/jpeg
@@ -344,15 +346,20 @@ pipeline:
         # allowed_audio_content_types overrides the built-in audio MIME
         # allowlist. Applies to audio_url data URIs, to the Content-Type an
         # http(s) audio_url origin returns, and to input_audio parts. Unlike
-        # image, the download path is checked whether or not this param is set,
-        # including against S3/GCS/presigned-URL origins, which serve every
-        # object as application/octet-stream by default. If audio downloads from
-        # such an origin are rejected as "content type not allowed", either set
-        # this to an empty list to accept any type, or add
-        # application/octet-stream explicitly. It is deliberately not a default:
-        # an origin that declares nothing useful and one that is actively lying
-        # send the identical header, so accepting it by default would accept any
-        # file type for audio.
+        # image, the download path is checked whether or not this param is set.
+        #
+        # While this param is unset, a download that arrives unlabeled is
+        # accepted: S3, GCS and presigned URLs serve every object as
+        # application/octet-stream unless its type was set at upload, and an
+        # absent header reads the same. Refusing those would buy nothing, since
+        # an origin that is actively lying can send audio/wav just as easily;
+        # what the check still refuses is an origin that honestly returns
+        # something else, such as an HTML error page or a login redirect.
+        #
+        # Setting this param is read literally, so the list is exactly what is
+        # accepted and an unlabeled origin is no longer among it. Add
+        # application/octet-stream to keep taking those, or set an empty list to
+        # accept any type at all.
         # Default: audio/wav, audio/x-wav, audio/mpeg, audio/mp3, audio/flac,
         # audio/x-flac, audio/ogg, audio/opus, audio/webm.
         #
@@ -370,12 +377,9 @@ pipeline:
         # allowed_video_content_types overrides the built-in video MIME
         # allowlist. Applies to video_url data URIs and to the Content-Type an
         # http(s) video_url origin returns; as with audio, the download path is
-        # checked whether or not this param is set, including against
-        # S3/GCS/presigned-URL origins, which serve every object as
-        # application/octet-stream by default. If video downloads from such an
-        # origin are rejected as "content type not allowed", set this to an
-        # empty list or add application/octet-stream explicitly; see
-        # allowed_audio_content_types for why it is not a default.
+        # checked whether or not this param is set, an unlabeled download is
+        # accepted while the param is unset, and setting it is read literally.
+        # See allowed_audio_content_types for the reasoning.
         # Default: video/mp4, video/webm, video/quicktime, video/mpeg, video/ogg.
         # allowed_video_content_types:
         #   - video/mp4

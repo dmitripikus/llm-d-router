@@ -472,7 +472,7 @@ func (s *ReplaceMediaURLsStep) download(ctx context.Context, rawURL string, moda
 	// that cannot be accepted costs its headers rather than up to sizeCap bytes
 	// read and held. enforceDownloadContentType decides which modalities this
 	// covers; data URIs are checked regardless.
-	if s.enforceDownloadContentType(modality) && !s.allowedContentTypeForModality(contentType, modality) {
+	if s.enforceDownloadContentType(modality) && !s.allowedDownloadContentType(contentType, modality) {
 		return nil, "", fmt.Errorf("downloaded content type %q not allowed for %s: %w", contentType, modality, pipeline.ErrBadRequest)
 	}
 
@@ -582,13 +582,43 @@ func (s *ReplaceMediaURLsStep) allowedContentTypeForModality(contentType string,
 	return ok
 }
 
+// allowedDownloadContentType reports whether contentType is allowed for a
+// download of this modality. It is allowedContentTypeForModality plus
+// defaultContentType, and the difference is who chose the label.
+//
+// An origin that stores media unlabeled and one that is lying send the same
+// application/octet-stream, so this cannot tell them apart -- but neither can
+// the strict form, since a lying origin is free to send audio/wav instead.
+// What the check does catch is an origin that honestly returns something else:
+// an HTML error page, a login redirect, a JSON error body. Refusing
+// octet-stream buys nothing against the liar and costs every S3, GCS or
+// presigned URL that serves its objects unlabeled, whose operator would then
+// turn the check off wholesale and lose the error-page case too.
+//
+// A data URI is checked by allowedContentTypeForModality instead, with no such
+// allowance: there the client wrote the media type itself, so an unlabeled one
+// is a request to fix rather than an origin to tolerate.
+//
+// The allowance covers the built-in list only. An operator who writes
+// allowed_<modality>_content_types has stated exactly what to accept, and
+// coordinator.yaml tells them to add application/octet-stream when they want
+// unlabeled origins too; honoring that list literally is what keeps that line
+// meaningful.
+func (s *ReplaceMediaURLsStep) allowedDownloadContentType(contentType string, modality reqcommon.Modality) bool {
+	if _, explicit := s.contentTypeOverrides[modality]; !explicit && contentType == defaultContentType {
+		return true
+	}
+	return s.allowedContentTypeForModality(contentType, modality)
+}
+
 // enforceDownloadContentType reports whether the per-modality allowlist is
 // applied to the Content-Type an HTTP origin returned; data URIs are always
 // checked, so this governs the download path only. Audio and video always,
 // for the reason recorded on coordinator.yaml's max_audio_download_size;
 // images only when allowed_image_content_types is set explicitly, and that
 // param's comment there records why unset leaves them unchecked. An origin
-// sending no Content-Type lands on defaultContentType.
+// sending no Content-Type lands on defaultContentType, which
+// allowedDownloadContentType accepts.
 func (s *ReplaceMediaURLsStep) enforceDownloadContentType(modality reqcommon.Modality) bool {
 	if modality != reqcommon.ModalityImage {
 		return true

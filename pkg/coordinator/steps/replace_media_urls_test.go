@@ -1845,6 +1845,143 @@ func TestReplaceMediaURLsStep_AudioVideo_AcceptsContentTypeWithParams(t *testing
 // An audio_url whose origin serves a non-audio Content-Type (text/html) is
 // rejected as ErrBadRequest, closing an SSRF-style widening where a caller
 // uses an audio_url slot to smuggle text or HTML.
+// An object store that serves its objects unlabeled must not fail the download
+// check. S3, GCS and presigned URLs return application/octet-stream for
+// anything whose type was not set at upload, and an absent header lands on the
+// same value, so the strict form rejected ordinary audio and video hosting. It
+// bought nothing: an origin that is lying sends audio/wav just as easily, so
+// the only thing refusing octet-stream stopped was honest hosting -- and both
+// documented escapes turn the check off wholesale, losing the text/html case
+// below with it.
+func TestReplaceMediaURLsStep_Download_AcceptsUnlabeledOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		contentType string // "" sends no header at all
+	}{
+		{"declared octet-stream", defaultContentType},
+		{"no Content-Type header", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, media := range []struct {
+				partType string
+				file     string
+			}{
+				{reqcommon.PartTypeAudioURL, "/clip.wav"},
+				{reqcommon.PartTypeVideoURL, "/clip.mp4"},
+			} {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					if tc.contentType != "" {
+						w.Header().Set("Content-Type", tc.contentType)
+					} else {
+						// Go sniffs a type for an unset header; an empty value
+						// is how a handler sends none.
+						w.Header()["Content-Type"] = nil
+					}
+					_, _ = w.Write([]byte("payload"))
+				}))
+				defer server.Close()
+
+				step := newLoopbackStep(t, map[string]any{"download_timeout": "5s"})
+				reqCtx := &pipeline.RequestContext{
+					Body: map[string]any{
+						"messages": []any{
+							map[string]any{
+								"role": "user",
+								"content": []any{
+									map[string]any{
+										"type":         media.partType,
+										media.partType: map[string]any{"url": server.URL + media.file},
+									},
+								},
+							},
+						},
+					},
+				}
+				if err := step.Execute(context.Background(), reqCtx); err != nil {
+					t.Errorf("%s: expected an unlabeled origin to be accepted, got %v", media.partType, err)
+				}
+			}
+		})
+	}
+}
+
+// The allowance is for the built-in list only. An operator who writes the param
+// has said exactly what to accept, and coordinator.yaml tells them to add
+// application/octet-stream when they want unlabeled origins too -- so honoring
+// the list literally is what keeps that line meaningful.
+func TestReplaceMediaURLsStep_Download_ExplicitListExcludesUnlabeled(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", defaultContentType)
+		_, _ = w.Write([]byte("payload"))
+	}))
+	defer server.Close()
+
+	for _, tc := range []struct {
+		name      string
+		allowed   []any
+		wantError bool
+	}{
+		{"locked down to wav", []any{testAudioWAVMIME}, true},
+		{"octet-stream added back", []any{testAudioWAVMIME, defaultContentType}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			step := newLoopbackStep(t, map[string]any{
+				"download_timeout":            "5s",
+				"allowed_audio_content_types": tc.allowed,
+			})
+			reqCtx := &pipeline.RequestContext{
+				Body: map[string]any{
+					"messages": []any{
+						map[string]any{
+							"role": "user",
+							"content": []any{
+								map[string]any{
+									"type":      reqcommon.PartTypeAudioURL,
+									"audio_url": map[string]any{"url": server.URL + "/clip.wav"},
+								},
+							},
+						},
+					},
+				},
+			}
+			err := step.Execute(context.Background(), reqCtx)
+			if tc.wantError && err == nil {
+				t.Error("expected an explicit allowlist to exclude an unlabeled origin")
+			}
+			if !tc.wantError && err != nil {
+				t.Errorf("expected octet-stream to be accepted once listed, got %v", err)
+			}
+		})
+	}
+}
+
+// A data URI gets no such allowance: there the client wrote the media type, so
+// an unlabeled one is a request to fix rather than an origin to tolerate.
+func TestReplaceMediaURLsStep_DataURI_StillRejectsUnlabeled(t *testing.T) {
+	step, err := NewReplaceMediaURLsStep(nil, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reqCtx := &pipeline.RequestContext{
+		Body: map[string]any{
+			"messages": []any{
+				map[string]any{
+					"role": "user",
+					"content": []any{
+						map[string]any{
+							"type":      reqcommon.PartTypeAudioURL,
+							"audio_url": map[string]any{"url": "data:" + defaultContentType + ";base64,aGk="},
+						},
+					},
+				},
+			},
+		},
+	}
+	if err := step.Execute(context.Background(), reqCtx); err == nil {
+		t.Fatal("expected an unlabeled audio data URI to stay rejected")
+	}
+}
+
 func TestReplaceMediaURLsStep_AudioURL_RejectsUnexpectedContentType(t *testing.T) {
 	badServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
