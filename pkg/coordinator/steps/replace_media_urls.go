@@ -714,8 +714,9 @@ func parsePerModalityContentTypes(params map[string]any) (map[string]map[string]
 }
 
 // parseContentTypeSet accepts MIME strings as []any (the YAML decode path) or
-// []string (programmatic callers), returning a set keyed by lowercase MIME.
-// fieldName appears only in error messages.
+// []string (programmatic callers), returning a set keyed by lowercase MIME. An
+// entry that normalizes to nothing is rejected, for the reason recorded on the
+// check below. fieldName appears only in error messages.
 func parseContentTypeSet(raw any, fieldName string) (map[string]struct{}, error) {
 	var entries []any
 	switch v := raw.(type) {
@@ -737,7 +738,16 @@ func parseContentTypeSet(raw any, fieldName string) (map[string]struct{}, error)
 		}
 		// Same normalization the checked types get, so an entry written with
 		// a parameter attached still matches the bare type it names.
-		set[normalizeMediaType(mime)] = struct{}{}
+		normalized := normalizeMediaType(mime)
+		// An entry that normalizes away would key the set at "", which no
+		// normalized Content-Type ever equals, so the modality would reject
+		// every request: the inverse of the empty list's "accept anything".
+		// Rejected at startup for the reason a null value is, since a
+		// templating slip must not flip the control's sense silently.
+		if normalized == "" {
+			return nil, fmt.Errorf("%s entries must name a media type, got %q", fieldName, mime)
+		}
+		set[normalized] = struct{}{}
 	}
 	return set, nil
 }

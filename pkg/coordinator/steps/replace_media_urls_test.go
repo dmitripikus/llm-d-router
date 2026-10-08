@@ -2987,6 +2987,38 @@ func TestReplaceMediaURLsStep_RejectsNullAllowedContentTypes(t *testing.T) {
 	}
 }
 
+// Construction fails on an allowlist entry that normalizes to nothing, the
+// same class of templating slip as the null value above and a worse outcome:
+// such an entry keys the set at "", which no normalized Content-Type equals,
+// so the modality would reject every request while an empty list accepts
+// anything. A typo would invert the control rather than relax it.
+func TestReplaceMediaURLsStep_RejectsEmptyAllowedContentTypeEntry(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		entry string
+	}{
+		{"empty", ""},
+		{"spaces", "   "},
+		{"tab and newline", "\t\n"},
+		{"parameters only", "; charset=utf-8"},
+		{"leading comma", ",audio/wav"}, // normalization cuts at the comma
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := tc.entry
+			for _, key := range []string{
+				"allowed_image_content_types",
+				"allowed_audio_content_types",
+				"allowed_video_content_types",
+			} {
+				params := map[string]any{key: []any{testAudioWAVMIME, entry}}
+				if _, err := NewReplaceMediaURLsStep(nil, params); err == nil {
+					t.Errorf("%s: expected construction error for entry %q", key, entry)
+				}
+			}
+		})
+	}
+}
+
 // Pins the pairing the null case above protects: setting the image allowlist at
 // all, empty list included, turns on the download-path Content-Type check,
 // while leaving it unset keeps the permissive path.
