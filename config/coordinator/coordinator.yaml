@@ -229,7 +229,7 @@ pipeline:
         #
         # 0 (or omitted) = unlimited, which lets a request body of a few KB name
         # hundreds of URLs and turn each one into a download.
-        max_multimodal_entries: 8
+        # max_multimodal_entries: 8
 
         # max_download_size caps the megabytes read per media download. A response
         # whose Content-Length or body exceeds the cap is rejected as a client
