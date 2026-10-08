@@ -585,31 +585,24 @@ func TestReplaceMediaURLsStep_RejectsUnusableMediaPart(t *testing.T) {
 	}
 }
 
-// base64LenForBytes must agree with the real encoder and stay positive for
-// every cap config validation permits: the naive 4*((cap+2)/3) overflows int64
-// for a large max_audio_download_size, and a negative bound would reject every
-// input_audio instead of accepting more.
-func TestBase64LenForBytes(t *testing.T) {
-	// Agreement with the encoder, including the non-multiple-of-3 sizes where
-	// padding decides the answer.
-	for _, n := range []int{0, 1, 2, 3, 4, 5, 6, 100, 1024, 1024 * 1024} {
-		want := int64(len(base64.StdEncoding.EncodeToString(make([]byte, n))))
-		if got := base64LenForBytes(int64(n)); got != want {
-			t.Errorf("base64LenForBytes(%d) = %d, want %d", n, got, want)
-		}
-	}
-
-	// Never negative, never zero, for anything reachable through config.
-	maxConfigurable := int64((math.MaxInt-1)/config.BytesPerMB) * config.BytesPerMB
-	for _, cap64 := range []int64{
-		maxConfigurable,
-		math.MaxInt64 / 4,
-		math.MaxInt64 / 2,
-		math.MaxInt64 - 2,
-		math.MaxInt64,
-	} {
-		if got := base64LenForBytes(cap64); got <= 0 {
-			t.Errorf("base64LenForBytes(%d) = %d, want a positive bound", cap64, got)
+// The inline size check measures the payload, so it is exact at the cap for
+// every size, including the non-multiples of 3 where padding decides the
+// answer. This is the property the old encoded-length bound could not hold:
+// it compared against 4*ceil(cap/3), which for a cap that is not a multiple
+// of 3 sits up to 2 bytes above the cap.
+func TestInlineSizeExceeded_ExactAtEveryBoundary(t *testing.T) {
+	for _, sizeCap := range []int64{1, 2, 3, 4, 5, 6, 100, 1023, 1024, 1048576} {
+		step := &ReplaceMediaURLsStep{maxDownloadSize: sizeCap}
+		for _, payloadBytes := range []int64{sizeCap - 1, sizeCap, sizeCap + 1, sizeCap + 2} {
+			if payloadBytes < 0 {
+				continue
+			}
+			b64 := base64.StdEncoding.EncodeToString(make([]byte, payloadBytes))
+			want := payloadBytes > sizeCap
+			if got := step.inlineSizeExceeded(b64, reqcommon.ModalityAudio); got != want {
+				t.Errorf("cap %d, payload %d bytes: exceeded = %v, want %v",
+					sizeCap, payloadBytes, got, want)
+			}
 		}
 	}
 }

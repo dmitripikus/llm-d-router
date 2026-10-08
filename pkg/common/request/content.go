@@ -54,6 +54,24 @@ func MediaPartURL(part map[string]any) string {
 	return url
 }
 
+// Base64DecodedLen returns the number of bytes a standard base64 payload
+// decodes to, without decoding it. Callers measuring an inline media payload
+// use it to size or bound the payload while it is still a string, so an
+// oversized one is never allocated.
+//
+// Exact for a padded payload: stripping the padding leaves the characters that
+// carry data, and n*3/4 floors to the byte count for every length. Two cases
+// read long. A line-wrapped payload counts its newlines, about 1% high, and a
+// malformed one is measured rather than refused, since this reports a length
+// and the serving engine is what validates the encoding.
+func Base64DecodedLen(rawB64 string) int {
+	n := len(rawB64)
+	for n > 0 && rawB64[n-1] == '=' {
+		n--
+	}
+	return n * 3 / 4
+}
+
 // PartArray is one content part array of a message or input item, named by the
 // body field it came from so a caller can report which array it walked.
 type PartArray struct {

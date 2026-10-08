@@ -389,11 +389,18 @@ func (s *ReplaceMediaURLsStep) validateInlineAudio(ref mediaRef) error {
 }
 
 // inlineSizeExceeded reports whether a base64 payload that arrived inline in
-// the request body exceeds the modality's cap. The bound is on base64 length,
-// checked before any decode, so an oversized payload is never allocated; it
-// holds to within 2 bytes when the cap is not a multiple of 3.
+// the request body exceeds the modality's cap. The payload is measured, never
+// decoded, so an oversized one is rejected without being allocated.
+//
+// Measuring the payload rather than encoding the cap is what keeps this exact
+// at the boundary, where a cap that is not a multiple of 3 used to leave the
+// bound up to 2 bytes slack: reqcommon.Base64DecodedLen counts the payload's
+// padding, so a payload of exactly cap bytes compares equal and is accepted
+// (TestReplaceMediaURLsStep_InputAudio_ExactlyAtCap). It also keeps the
+// arithmetic on an int bounded by server.max_request_body_size, leaving
+// nothing on the cap side to overflow.
 func (s *ReplaceMediaURLsStep) inlineSizeExceeded(b64 string, modality reqcommon.Modality) bool {
-	return int64(len(b64)) > base64LenForBytes(s.downloadSizeFor(modality))
+	return int64(reqcommon.Base64DecodedLen(b64)) > s.downloadSizeFor(modality)
 }
 
 // enforceInlineSize reports whether the per-modality cap applies to a data URI
@@ -409,22 +416,6 @@ func (s *ReplaceMediaURLsStep) enforceInlineSize(modality reqcommon.Modality) bo
 	}
 	_, explicit := s.maxDownloadSizeByMod[reqcommon.ModalityImage]
 	return explicit
-}
-
-// base64LenForBytes returns the padded-base64 length of a sizeCap-byte payload,
-// 4*ceil(sizeCap/3) chars. The multiply saturates at MaxInt64 rather than
-// wrapping: a cap is validated only against MaxInt/BytesPerMB, so sizeCap can
-// reach ~9.2e18, where the product overflows int64 and turns the bound
-// negative, rejecting every input_audio. Saturated, such a cap stops binding.
-func base64LenForBytes(sizeCap int64) int64 {
-	if sizeCap > math.MaxInt64-2 {
-		return math.MaxInt64
-	}
-	groups := (sizeCap + 2) / 3
-	if groups > math.MaxInt64/4 {
-		return math.MaxInt64
-	}
-	return 4 * groups
 }
 
 func appendMultimodalEntry(reqCtx *pipeline.RequestContext, modality reqcommon.Modality) {
