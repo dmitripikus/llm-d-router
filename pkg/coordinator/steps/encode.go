@@ -154,15 +154,17 @@ func (s *EncodeStep) executeOne(
 
 	body, err := s.buildEncodeBody(reqCtx, entry, localIdx, format, partsByMod)
 	if err != nil {
-		// Entries and parts got out of line upstream (see collectMediaParts).
-		// Both come from the same request by the same rule, so this is a
-		// coordinator bug: fail rather than send the encoder a request known to
-		// be wrong.
+		// Every failure here is a coordinator bug rather than a bad request:
+		// either entries and parts got out of line upstream, though
+		// collectMediaParts builds both from one walk by one rule, or a format
+		// reached this fan-out that should never carry media. Fail rather than
+		// send the encoder a request known to be wrong. Which one it was is in
+		// the wrapped err, so the message names the stage and asserts nothing;
+		// the part count the pairing failures care about is in there too.
 		err = fmt.Errorf("encode[%d]: %w", index, err)
-		logger.Error(err, "encode fanout entry has no media part",
+		logger.Error(err, "encode fanout build body",
 			"modality", entry.Modality,
-			"local_index", localIdx,
-			"parts_available", len(partsByMod[entry.Modality]))
+			"local_index", localIdx)
 		return nil, nil, err
 	}
 	bodyBytes, err := json.Marshal(body)
