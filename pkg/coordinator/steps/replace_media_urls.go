@@ -91,15 +91,15 @@ type ReplaceMediaURLsStep struct {
 	// override. Reached through downloadSizeFor.
 	maxDownloadSize int64
 	// maxDownloadSizeByMod optionally overrides maxDownloadSize per modality,
-	// keyed by the Modality* constants. A missing key falls back.
-	maxDownloadSizeByMod map[string]int64
+	// keyed by modality. A missing key falls back.
+	maxDownloadSizeByMod map[reqcommon.Modality]int64
 	// allowedContentTypes is the per-modality MIME allowlist (lowercase)
-	// applied to data URIs and input_audio items, keyed by Modality*.
-	allowedContentTypes map[string]map[string]struct{}
+	// applied to data URIs and input_audio items, keyed by modality.
+	allowedContentTypes map[reqcommon.Modality]map[string]struct{}
 	// contentTypeOverrides names the modalities with an explicit
 	// allowed_<modality>_content_types param, telling one from the built-in
 	// default. Only image reads it; see enforceDownloadContentType.
-	contentTypeOverrides map[string]struct{}
+	contentTypeOverrides map[reqcommon.Modality]struct{}
 	guard                *addressGuard
 	client               *http.Client
 }
@@ -392,7 +392,7 @@ func (s *ReplaceMediaURLsStep) validateInlineAudio(ref mediaRef) error {
 // the request body exceeds the modality's cap. The bound is on base64 length,
 // checked before any decode, so an oversized payload is never allocated; it
 // holds to within 2 bytes when the cap is not a multiple of 3.
-func (s *ReplaceMediaURLsStep) inlineSizeExceeded(b64, modality string) bool {
+func (s *ReplaceMediaURLsStep) inlineSizeExceeded(b64 string, modality reqcommon.Modality) bool {
 	return int64(len(b64)) > base64LenForBytes(s.downloadSizeFor(modality))
 }
 
@@ -403,11 +403,11 @@ func (s *ReplaceMediaURLsStep) inlineSizeExceeded(b64, modality string) bool {
 // enforceDownloadContentType opts in on allowed_image_content_types: falling
 // back to max_download_size would start rejecting data URIs every config
 // setting it has always accepted, and unset leaves max_request_body_size.
-func (s *ReplaceMediaURLsStep) enforceInlineSize(modality string) bool {
-	if modality != ModalityImage {
+func (s *ReplaceMediaURLsStep) enforceInlineSize(modality reqcommon.Modality) bool {
+	if modality != reqcommon.ModalityImage {
 		return true
 	}
-	_, explicit := s.maxDownloadSizeByMod[ModalityImage]
+	_, explicit := s.maxDownloadSizeByMod[reqcommon.ModalityImage]
 	return explicit
 }
 
@@ -427,13 +427,13 @@ func base64LenForBytes(sizeCap int64) int64 {
 	return 4 * groups
 }
 
-func appendMultimodalEntry(reqCtx *pipeline.RequestContext, modality string) {
+func appendMultimodalEntry(reqCtx *pipeline.RequestContext, modality reqcommon.Modality) {
 	reqCtx.MultimodalEntries = append(reqCtx.MultimodalEntries, pipeline.MultimodalEntry{
 		Modality: modality,
 	})
 }
 
-func (s *ReplaceMediaURLsStep) download(ctx context.Context, rawURL, modality string) ([]byte, string, error) {
+func (s *ReplaceMediaURLsStep) download(ctx context.Context, rawURL string, modality reqcommon.Modality) ([]byte, string, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, "", fmt.Errorf("invalid URL: %w: %w", err, pipeline.ErrBadRequest)
@@ -511,7 +511,7 @@ type mediaRef struct {
 	// location names where this ref's part sits in the client body, for error
 	// messages: "message 0 content part 2", "input item 1 output part 0".
 	location string
-	modality string
+	modality reqcommon.Modality
 	isInline bool
 	// URL variant:
 	url string
@@ -547,14 +547,14 @@ func encodeDataURI(contentType string, data []byte) string {
 // allowlist for data URIs and input_audio items, used for any modality the
 // allowed_{image,audio,video}_content_types params do not override.
 // Intentionally permissive: codec-level restrictions are the backend's job.
-var defaultAllowedContentTypesByModality = map[string]map[string]struct{}{
-	ModalityImage: {
+var defaultAllowedContentTypesByModality = map[reqcommon.Modality]map[string]struct{}{
+	reqcommon.ModalityImage: {
 		"image/jpeg": {},
 		"image/png":  {},
 		"image/gif":  {},
 		"image/webp": {},
 	},
-	ModalityAudio: {
+	reqcommon.ModalityAudio: {
 		"audio/wav":    {},
 		"audio/x-wav":  {},
 		"audio/mpeg":   {},
@@ -565,7 +565,7 @@ var defaultAllowedContentTypesByModality = map[string]map[string]struct{}{
 		"audio/opus":   {},
 		"audio/webm":   {},
 	},
-	ModalityVideo: {
+	reqcommon.ModalityVideo: {
 		"video/mp4":       {},
 		"video/webm":      {},
 		"video/quicktime": {},
@@ -579,7 +579,7 @@ var defaultAllowedContentTypesByModality = map[string]map[string]struct{}{
 // by normalizeMediaType, as every caller does, so the lookup is a plain map
 // hit. A nil value means the operator opted out
 // (allowed_<modality>_content_types: []) and anything is accepted.
-func (s *ReplaceMediaURLsStep) allowedContentTypeForModality(contentType, modality string) bool {
+func (s *ReplaceMediaURLsStep) allowedContentTypeForModality(contentType string, modality reqcommon.Modality) bool {
 	allowed, ok := s.allowedContentTypes[modality]
 	if !ok {
 		return false
@@ -598,11 +598,11 @@ func (s *ReplaceMediaURLsStep) allowedContentTypeForModality(contentType, modali
 // images only when allowed_image_content_types is set explicitly, and that
 // param's comment there records why unset leaves them unchecked. An origin
 // sending no Content-Type lands on defaultContentType.
-func (s *ReplaceMediaURLsStep) enforceDownloadContentType(modality string) bool {
-	if modality != ModalityImage {
+func (s *ReplaceMediaURLsStep) enforceDownloadContentType(modality reqcommon.Modality) bool {
+	if modality != reqcommon.ModalityImage {
 		return true
 	}
-	_, explicit := s.contentTypeOverrides[ModalityImage]
+	_, explicit := s.contentTypeOverrides[reqcommon.ModalityImage]
 	return explicit
 }
 
@@ -610,7 +610,7 @@ func (s *ReplaceMediaURLsStep) enforceDownloadContentType(modality string) bool 
 // the global default. Every byte bound in this step resolves through it; which
 // payloads each cap reaches is recorded on coordinator.yaml's
 // max_download_size.
-func (s *ReplaceMediaURLsStep) downloadSizeFor(modality string) int64 {
+func (s *ReplaceMediaURLsStep) downloadSizeFor(modality reqcommon.Modality) int64 {
 	if v, ok := s.maxDownloadSizeByMod[modality]; ok {
 		return v
 	}
@@ -620,7 +620,7 @@ func (s *ReplaceMediaURLsStep) downloadSizeFor(modality string) int64 {
 // modalityParam pairs a modality with a config key that overrides one of its
 // defaults.
 type modalityParam struct {
-	modality string
+	modality reqcommon.Modality
 	param    string
 }
 
@@ -629,16 +629,16 @@ type modalityParam struct {
 // than one bad value always reports the same one instead of a different
 // message on each restart.
 var perModalityDownloadSizeParams = []modalityParam{
-	{ModalityImage, "max_image_download_size"},
-	{ModalityAudio, "max_audio_download_size"},
-	{ModalityVideo, "max_video_download_size"},
+	{reqcommon.ModalityImage, "max_image_download_size"},
+	{reqcommon.ModalityAudio, "max_audio_download_size"},
+	{reqcommon.ModalityVideo, "max_video_download_size"},
 }
 
 // parsePerModalityDownloadSizes reads the three optional cap params, each
 // validated like max_download_size (positive, at most MaxInt/BytesPerMB).
 // Returns nil when none is set, telling "no override" from "set to zero".
-func parsePerModalityDownloadSizes(params map[string]any) (map[string]int64, error) {
-	var out map[string]int64
+func parsePerModalityDownloadSizes(params map[string]any) (map[reqcommon.Modality]int64, error) {
+	var out map[reqcommon.Modality]int64
 	for _, mp := range perModalityDownloadSizeParams {
 		v, ok, err := paramInt(params, mp.param)
 		if err != nil {
@@ -651,7 +651,7 @@ func parsePerModalityDownloadSizes(params map[string]any) (map[string]int64, err
 			return nil, fmt.Errorf("%s must be positive and at most %d MB, got %d", mp.param, (math.MaxInt-1)/config.BytesPerMB, v)
 		}
 		if out == nil {
-			out = make(map[string]int64, len(perModalityDownloadSizeParams))
+			out = make(map[reqcommon.Modality]int64, len(perModalityDownloadSizeParams))
 		}
 		out[mp.modality] = int64(v) * config.BytesPerMB
 	}
@@ -662,9 +662,9 @@ func parsePerModalityDownloadSizes(params map[string]any) (map[string]int64, err
 // MIME allowlist per modality. A slice, for the reason on
 // perModalityDownloadSizeParams.
 var perModalityContentTypeParams = []modalityParam{
-	{ModalityImage, "allowed_image_content_types"},
-	{ModalityAudio, "allowed_audio_content_types"},
-	{ModalityVideo, "allowed_video_content_types"},
+	{reqcommon.ModalityImage, "allowed_image_content_types"},
+	{reqcommon.ModalityAudio, "allowed_audio_content_types"},
+	{reqcommon.ModalityVideo, "allowed_video_content_types"},
 }
 
 // parsePerModalityContentTypes builds the final per-modality allowlist from
@@ -684,15 +684,15 @@ var perModalityContentTypeParams = []modalityParam{
 // included, since a default set and an override matching it are
 // indistinguishable in the first and enforceDownloadContentType must tell
 // them apart.
-func parsePerModalityContentTypes(params map[string]any) (map[string]map[string]struct{}, map[string]struct{}, error) {
-	out := make(map[string]map[string]struct{}, len(defaultAllowedContentTypesByModality))
+func parsePerModalityContentTypes(params map[string]any) (map[reqcommon.Modality]map[string]struct{}, map[reqcommon.Modality]struct{}, error) {
+	out := make(map[reqcommon.Modality]map[string]struct{}, len(defaultAllowedContentTypesByModality))
 	for mod, set := range defaultAllowedContentTypesByModality {
 		// Clone so a caller mutating a returned set never leaks into
 		// defaultAllowedContentTypesByModality, which every future
 		// ReplaceMediaURLsStep in the process sees.
 		out[mod] = maps.Clone(set)
 	}
-	overrides := make(map[string]struct{}, len(perModalityContentTypeParams))
+	overrides := make(map[reqcommon.Modality]struct{}, len(perModalityContentTypeParams))
 	for _, mp := range perModalityContentTypeParams {
 		raw, present := params[mp.param]
 		if !present {

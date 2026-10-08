@@ -71,12 +71,12 @@ func TestEncodeStep_ParallelFanOut(t *testing.T) {
 			t.Errorf("expected features in encode request")
 		}
 		mmHashes, _ := features["mm_hashes"].(map[string]any)
-		imageHashes, _ := mmHashes[ModalityImage].([]any)
+		imageHashes, _ := mmHashes[string(reqcommon.ModalityImage)].([]any)
 		if len(imageHashes) != 1 {
 			t.Errorf("expected 1 hash per encode request, got %d", len(imageHashes))
 		}
 		kwargsData, _ := features["kwargs_data"].(map[string]any)
-		imageKwargs, _ := kwargsData[ModalityImage].([]any)
+		imageKwargs, _ := kwargsData[string(reqcommon.ModalityImage)].([]any)
 		if len(imageKwargs) != 1 {
 			t.Errorf("expected 1 kwargs_data per encode request, got %d", len(imageKwargs))
 		}
@@ -112,9 +112,9 @@ func TestEncodeStep_ParallelFanOut(t *testing.T) {
 		Model:     testModelName,
 		TokenIDs:  []int{1, 32000, 32000, 32000, 32000, 32000, 32000, 2345},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "hash-a", KwargsData: "dGVuc29yLWE=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
-			{Modality: ModalityImage, Hash: "hash-b", KwargsData: "dGVuc29yLWI=", Placeholder: pipeline.PlaceholderRange{Offset: 4, Length: 3}},
-			{Modality: ModalityImage, Hash: "hash-c", KwargsData: "dGVuc29yLWM=", Placeholder: pipeline.PlaceholderRange{Offset: 4, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "hash-a", KwargsData: "dGVuc29yLWE=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "hash-b", KwargsData: "dGVuc29yLWI=", Placeholder: pipeline.PlaceholderRange{Offset: 4, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "hash-c", KwargsData: "dGVuc29yLWM=", Placeholder: pipeline.PlaceholderRange{Offset: 4, Length: 3}},
 		},
 	}
 
@@ -194,7 +194,7 @@ func TestEncodeStep_ParallelFanOutSharesRevisionDecisionIDAndAggregatesResponseH
 		}
 		features, _ := parsed["features"].(map[string]any)
 		mmHashes, _ := features["mm_hashes"].(map[string]any)
-		imageHashes, _ := mmHashes[ModalityImage].([]any)
+		imageHashes, _ := mmHashes[string(reqcommon.ModalityImage)].([]any)
 		if len(imageHashes) != 1 {
 			t.Errorf("encode request has %d image hashes, want 1", len(imageHashes))
 			return
@@ -235,11 +235,11 @@ func TestEncodeStep_ParallelFanOutSharesRevisionDecisionIDAndAggregatesResponseH
 		Model:              testModelName,
 		TokenIDs:           []int{1, 32000, 32000, 32000, 32000, 32000},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "h1", KwargsData: "dDE=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
-			{Modality: ModalityImage, Hash: "h2", KwargsData: "dDI=", Placeholder: pipeline.PlaceholderRange{Offset: 2, Length: 1}},
-			{Modality: ModalityImage, Hash: "h3", KwargsData: "dDM=", Placeholder: pipeline.PlaceholderRange{Offset: 3, Length: 1}},
-			{Modality: ModalityImage, Hash: "h4", KwargsData: "dDQ=", Placeholder: pipeline.PlaceholderRange{Offset: 4, Length: 1}},
-			{Modality: ModalityImage, Hash: "h5", KwargsData: "dDU=", Placeholder: pipeline.PlaceholderRange{Offset: 5, Length: 1}},
+			{Modality: reqcommon.ModalityImage, Hash: "h1", KwargsData: "dDE=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
+			{Modality: reqcommon.ModalityImage, Hash: "h2", KwargsData: "dDI=", Placeholder: pipeline.PlaceholderRange{Offset: 2, Length: 1}},
+			{Modality: reqcommon.ModalityImage, Hash: "h3", KwargsData: "dDM=", Placeholder: pipeline.PlaceholderRange{Offset: 3, Length: 1}},
+			{Modality: reqcommon.ModalityImage, Hash: "h4", KwargsData: "dDQ=", Placeholder: pipeline.PlaceholderRange{Offset: 4, Length: 1}},
+			{Modality: reqcommon.ModalityImage, Hash: "h5", KwargsData: "dDU=", Placeholder: pipeline.PlaceholderRange{Offset: 5, Length: 1}},
 		},
 	}
 
@@ -298,7 +298,7 @@ func TestEncodeStep_SkipsInvalidECTransferParams(t *testing.T) {
 				Model:     testModelName,
 				TokenIDs:  []int{1, 32000, 32000, 2345},
 				MultimodalEntries: []pipeline.MultimodalEntry{
-					{Modality: ModalityImage, Hash: "hash-a", KwargsData: "dGVuc29yLWE=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+					{Modality: reqcommon.ModalityImage, Hash: "hash-a", KwargsData: "dGVuc29yLWE=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
 				},
 			}
 
@@ -326,7 +326,7 @@ func TestEncodeStep_PartialFailure(t *testing.T) {
 		_ = json.Unmarshal(body, &parsed)
 		features, _ := parsed["features"].(map[string]any)
 		mmHashes, _ := features["mm_hashes"].(map[string]any)
-		imageHashes, _ := mmHashes[ModalityImage].([]any)
+		imageHashes, _ := mmHashes[string(reqcommon.ModalityImage)].([]any)
 		hash, _ := imageHashes[0].(string)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ec_transfer_params": map[string]any{
@@ -345,9 +345,9 @@ func TestEncodeStep_PartialFailure(t *testing.T) {
 		Model:     "test",
 		TokenIDs:  []int{1, 32000, 32000, 32000},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "h1", KwargsData: "dDE=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
-			{Modality: ModalityImage, Hash: "h2", KwargsData: "dDI=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
-			{Modality: ModalityImage, Hash: "h3", KwargsData: "dDM=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "h1", KwargsData: "dDE=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "h2", KwargsData: "dDI=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "h3", KwargsData: "dDM=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
 		},
 	}
 
@@ -397,7 +397,7 @@ func TestEncodeStep_FailureLogRecord(t *testing.T) {
 				Model:     "test",
 				TokenIDs:  []int{1, 32000},
 				MultimodalEntries: []pipeline.MultimodalEntry{
-					{Modality: ModalityImage, Hash: "h1", KwargsData: "dDE=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
+					{Modality: reqcommon.ModalityImage, Hash: "h1", KwargsData: "dDE=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
 				},
 			}
 			if err := step.Execute(log.IntoContext(context.Background(), logger), reqCtx); err == nil {
@@ -435,8 +435,8 @@ func TestEncodeStep_DebugRequestRecord(t *testing.T) {
 		Model:     "test",
 		TokenIDs:  []int{1, 32000},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "h1", KwargsData: "dDE=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
-			{Modality: ModalityImage, Hash: "h2", KwargsData: "dDI=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
+			{Modality: reqcommon.ModalityImage, Hash: "h1", KwargsData: "dDE=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
+			{Modality: reqcommon.ModalityImage, Hash: "h2", KwargsData: "dDI=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
 		},
 	}
 	if err := step.Execute(log.IntoContext(context.Background(), logger), reqCtx); err != nil {
@@ -500,7 +500,7 @@ func TestEncodeStep_ChatCompletionsFormat(t *testing.T) {
 			},
 		},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "hash-x", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "hash-x", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
 		},
 	}
 
@@ -589,7 +589,7 @@ func TestEncodeStep_ResponsesFormat(t *testing.T) {
 			},
 		},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "hash-x", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "hash-x", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
 		},
 	}
 
@@ -676,7 +676,7 @@ func TestEncodeStep_ResponsesFormat_PreservesDetail(t *testing.T) {
 			},
 		},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "hash-detail", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "hash-detail", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
 		},
 	}
 
@@ -728,7 +728,7 @@ func TestEncodeStep_ResponsesFormat_RejectsNonStringImageURL(t *testing.T) {
 			},
 		},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "hash-bad", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "hash-bad", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
 		},
 	}
 
@@ -789,7 +789,7 @@ func TestEncodeStep_ChatCompletionsFormat_CapsMaxCompletionTokens(t *testing.T) 
 			},
 		},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "hash-b", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "hash-b", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
 		},
 	}
 
@@ -869,7 +869,7 @@ func TestEncodeStep_SkipsForGenerate(t *testing.T) {
 				OriginalPath: path,
 				TokenIDs:     []int{1, 32000, 32000, 2},
 				MultimodalEntries: []pipeline.MultimodalEntry{
-					{Modality: ModalityImage, Hash: "hash-a", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 2}},
+					{Modality: reqcommon.ModalityImage, Hash: "hash-a", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 2}},
 				},
 			}
 
@@ -915,8 +915,8 @@ func TestEncodeStep_EncoderReturnsNoECParams(t *testing.T) {
 		Model:     "test-model",
 		TokenIDs:  []int{1, 32000, 32000, 2},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "hash-a", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 2}},
-			{Modality: ModalityImage, Hash: "hash-b", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 2}},
+			{Modality: reqcommon.ModalityImage, Hash: "hash-a", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 2}},
+			{Modality: reqcommon.ModalityImage, Hash: "hash-b", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 2}},
 		},
 	}
 
@@ -941,7 +941,7 @@ func TestEncodeStep_BuildsCorrectTokenIDs(t *testing.T) {
 		receivedTokenIDs, _ = parsed["token_ids"].([]any)
 		features, _ := parsed["features"].(map[string]any)
 		mmHashes, _ := features["mm_hashes"].(map[string]any)
-		imageHashes, _ := mmHashes[ModalityImage].([]any)
+		imageHashes, _ := mmHashes[string(reqcommon.ModalityImage)].([]any)
 		hash, _ := imageHashes[0].(string)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ec_transfer_params": map[string]any{
@@ -959,7 +959,7 @@ func TestEncodeStep_BuildsCorrectTokenIDs(t *testing.T) {
 		Model:     "test",
 		TokenIDs:  []int{1, 32000, 32000, 32000, 2345, 6789},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "h1", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "h1", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
 		},
 	}
 
@@ -1008,7 +1008,7 @@ func TestEncodeStep_GenerateFormat_CapsSingleToken(t *testing.T) {
 		Model:     "test",
 		TokenIDs:  []int{1, 32000, 32000, 32000, 2345},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "h1", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "h1", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
 		},
 	}
 
@@ -1042,21 +1042,21 @@ func TestCollectMediaParts_MixedModalities(t *testing.T) {
 		},
 	}
 	partsByMod := groupMediaPartsByModality(collectMediaParts(items, reqcommon.APITypeChatCompletions))
-	if got := len(partsByMod[ModalityImage]); got != 2 {
+	if got := len(partsByMod[reqcommon.ModalityImage]); got != 2 {
 		t.Errorf("image parts = %d, want 2", got)
 	}
-	if got := len(partsByMod[ModalityAudio]); got != 2 {
+	if got := len(partsByMod[reqcommon.ModalityAudio]); got != 2 {
 		t.Errorf("audio parts = %d, want 2 (audio_url + input_audio)", got)
 	}
-	if got := len(partsByMod[ModalityVideo]); got != 1 {
+	if got := len(partsByMod[reqcommon.ModalityVideo]); got != 1 {
 		t.Errorf("video parts = %d, want 1", got)
 	}
 	// audio_url comes before input_audio (walker order in request).
-	if url, _ := partsByMod[ModalityAudio][0].part["audio_url"].(map[string]any); url["url"] != "u2" {
-		t.Errorf("audio[0] not the audio_url part: %+v", partsByMod[ModalityAudio][0].part)
+	if url, _ := partsByMod[reqcommon.ModalityAudio][0].part["audio_url"].(map[string]any); url["url"] != "u2" {
+		t.Errorf("audio[0] not the audio_url part: %+v", partsByMod[reqcommon.ModalityAudio][0].part)
 	}
-	if data, _ := partsByMod[ModalityAudio][1].part["input_audio"].(map[string]any); data["data"] != "d5" {
-		t.Errorf("audio[1] not the input_audio part: %+v", partsByMod[ModalityAudio][1].part)
+	if data, _ := partsByMod[reqcommon.ModalityAudio][1].part["input_audio"].(map[string]any); data["data"] != "d5" {
+		t.Errorf("audio[1] not the input_audio part: %+v", partsByMod[reqcommon.ModalityAudio][1].part)
 	}
 }
 
@@ -1082,7 +1082,7 @@ func TestCollectMediaParts_ResponsesKeepsInputImageOnly(t *testing.T) {
 	if len(parts) != 1 {
 		t.Fatalf("collected %d parts, want only the input_image: %+v", len(parts), parts)
 	}
-	if parts[0].modality != ModalityImage || parts[0].part["image_url"] != "u1" {
+	if parts[0].modality != reqcommon.ModalityImage || parts[0].part["image_url"] != "u1" {
 		t.Errorf("collected %+v, want the input_image part tagged image", parts[0])
 	}
 }
@@ -1117,18 +1117,18 @@ func TestCollectMediaParts_KeepsEveryMediaTypedPart(t *testing.T) {
 		},
 	}
 	partsByMod := groupMediaPartsByModality(collectMediaParts(items, reqcommon.APITypeChatCompletions))
-	if got := len(partsByMod[ModalityImage]); got != 3 {
+	if got := len(partsByMod[reqcommon.ModalityImage]); got != 3 {
 		t.Fatalf("image parts = %d, want 3 (every image-typed part)", got)
 	}
-	if got := len(partsByMod[ModalityAudio]); got != 5 {
+	if got := len(partsByMod[reqcommon.ModalityAudio]); got != 5 {
 		t.Fatalf("audio parts = %d, want 5 (every audio-typed part)", got)
 	}
 
 	// mediaPartCarriesPayload is what separates the usable parts, and it has to
 	// agree with the rule replace-media-urls rejects on.
-	wantPayload := map[string][]bool{
-		ModalityImage: {false, false, true},
-		ModalityAudio: {false, true, false, false, true},
+	wantPayload := map[reqcommon.Modality][]bool{
+		reqcommon.ModalityImage: {false, false, true},
+		reqcommon.ModalityAudio: {false, true, false, false, true},
 	}
 	for mod, want := range wantPayload {
 		for i, w := range want {
@@ -1146,29 +1146,29 @@ func TestCollectMediaParts_KeepsEveryMediaTypedPart(t *testing.T) {
 func TestBuildEncodeBody_PerModalityPart(t *testing.T) {
 	step := &EncodeStep{}
 	reqCtx := &pipeline.RequestContext{Model: testModelName, Body: map[string]any{"model": testModelName}}
-	partsByMod := map[string][]mediaPart{
-		ModalityImage: {
+	partsByMod := map[reqcommon.Modality][]mediaPart{
+		reqcommon.ModalityImage: {
 			{part: map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:image/jpeg;base64,IMG"}}},
 		},
-		ModalityAudio: {
+		reqcommon.ModalityAudio: {
 			{part: map[string]any{"type": "audio_url", "audio_url": map[string]any{"url": "data:audio/wav;base64,AUD"}}},
 			{part: map[string]any{"type": "input_audio", "input_audio": map[string]any{"data": "IA==", "format": "wav"}}},
 		},
-		ModalityVideo: {
+		reqcommon.ModalityVideo: {
 			{part: map[string]any{"type": "video_url", "video_url": map[string]any{"url": "data:video/mp4;base64,VID"}}},
 		},
 	}
 
 	for _, tc := range []struct {
 		name     string
-		modality string
+		modality reqcommon.Modality
 		localIdx int
 		wantType string
 	}{
-		{"image", ModalityImage, 0, "image_url"},
-		{"audio_url", ModalityAudio, 0, "audio_url"},
-		{"input_audio", ModalityAudio, 1, "input_audio"},
-		{"video_url", ModalityVideo, 0, "video_url"},
+		{"image", reqcommon.ModalityImage, 0, "image_url"},
+		{"audio_url", reqcommon.ModalityAudio, 0, "audio_url"},
+		{"input_audio", reqcommon.ModalityAudio, 1, "input_audio"},
+		{"video_url", reqcommon.ModalityVideo, 0, "video_url"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			entry := pipeline.MultimodalEntry{Modality: tc.modality}
@@ -1201,20 +1201,20 @@ func TestBuildEncodeBody_PerModalityPart(t *testing.T) {
 func TestBuildEncodeBody_OutOfRangeErrors(t *testing.T) {
 	step := &EncodeStep{}
 	reqCtx := &pipeline.RequestContext{Model: testModelName, Body: map[string]any{"model": testModelName}}
-	partsByMod := map[string][]mediaPart{
-		ModalityImage: {
+	partsByMod := map[reqcommon.Modality][]mediaPart{
+		reqcommon.ModalityImage: {
 			{part: map[string]any{"type": "image_url", "image_url": map[string]any{"url": "u0"}}},
 		},
 	}
 	for _, tc := range []struct {
 		name     string
-		modality string
+		modality reqcommon.Modality
 		localIdx int
 	}{
-		{"image past end", ModalityImage, 99},
-		{"audio absent", ModalityAudio, 0},
-		{"video absent", ModalityVideo, 0},
-		{"negative index", ModalityImage, -1},
+		{"image past end", reqcommon.ModalityImage, 99},
+		{"audio absent", reqcommon.ModalityAudio, 0},
+		{"video absent", reqcommon.ModalityVideo, 0},
+		{"negative index", reqcommon.ModalityImage, -1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			entry := pipeline.MultimodalEntry{Modality: tc.modality}
@@ -1225,7 +1225,7 @@ func TestBuildEncodeBody_OutOfRangeErrors(t *testing.T) {
 			if got != nil {
 				t.Errorf("expected nil body alongside the error, got %+v", got)
 			}
-			if !strings.Contains(err.Error(), tc.modality) {
+			if !strings.Contains(err.Error(), string(tc.modality)) {
 				t.Errorf("error %q should name the modality %q", err, tc.modality)
 			}
 		})
@@ -1263,8 +1263,8 @@ func TestEncodeStep_MissingMediaPartFails(t *testing.T) {
 		},
 		// Two entries, one part: the second has nothing to pair with.
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "h0", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
-			{Modality: ModalityImage, Hash: "h1", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
+			{Modality: reqcommon.ModalityImage, Hash: "h0", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
+			{Modality: reqcommon.ModalityImage, Hash: "h1", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
 		},
 		KVTransferParams: make(map[string]any),
 	}
@@ -1414,9 +1414,9 @@ func TestEncodeStep_MixedModalityFanout(t *testing.T) {
 			},
 		},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "img-hash", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
-			{Modality: ModalityAudio, Hash: "aud-hash", Placeholder: pipeline.PlaceholderRange{Offset: 2, Length: 1}},
-			{Modality: ModalityVideo, Hash: "vid-hash", Placeholder: pipeline.PlaceholderRange{Offset: 3, Length: 1}},
+			{Modality: reqcommon.ModalityImage, Hash: "img-hash", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
+			{Modality: reqcommon.ModalityAudio, Hash: "aud-hash", Placeholder: pipeline.PlaceholderRange{Offset: 2, Length: 1}},
+			{Modality: reqcommon.ModalityVideo, Hash: "vid-hash", Placeholder: pipeline.PlaceholderRange{Offset: 3, Length: 1}},
 		},
 		KVTransferParams: make(map[string]any),
 	}
@@ -1457,9 +1457,9 @@ func TestEncodeStep_WithinModalityFanoutPairing(t *testing.T) {
 			},
 		},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityAudio, Hash: "aud-inline-hash", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
-			{Modality: ModalityImage, Hash: "img-hash", Placeholder: pipeline.PlaceholderRange{Offset: 2, Length: 1}},
-			{Modality: ModalityAudio, Hash: "aud-url-hash", Placeholder: pipeline.PlaceholderRange{Offset: 3, Length: 1}},
+			{Modality: reqcommon.ModalityAudio, Hash: "aud-inline-hash", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
+			{Modality: reqcommon.ModalityImage, Hash: "img-hash", Placeholder: pipeline.PlaceholderRange{Offset: 2, Length: 1}},
+			{Modality: reqcommon.ModalityAudio, Hash: "aud-url-hash", Placeholder: pipeline.PlaceholderRange{Offset: 3, Length: 1}},
 		},
 		KVTransferParams: make(map[string]any),
 	}
@@ -1605,8 +1605,8 @@ func TestEncodeStep_ResponsesFormat_FansOutFunctionCallOutputImage(t *testing.T)
 			},
 		},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "hash-content", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
-			{Modality: ModalityImage, Hash: "hash-output", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 2, Length: 1}},
+			{Modality: reqcommon.ModalityImage, Hash: "hash-content", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
+			{Modality: reqcommon.ModalityImage, Hash: "hash-output", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 2, Length: 1}},
 		},
 	}
 
@@ -1697,7 +1697,7 @@ func TestEncodeStep_ForwardsPreprocessingKwargs(t *testing.T) {
 					"frequency_penalty": 0.5,
 				},
 				MultimodalEntries: []pipeline.MultimodalEntry{
-					{Modality: ModalityImage, Hash: "hash-kwargs", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
+					{Modality: reqcommon.ModalityImage, Hash: "hash-kwargs", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
 				},
 			}
 
@@ -1754,8 +1754,8 @@ func TestEncodeStep_ResponsesFormat_RejectsEntryIndexBeyondImageParts(t *testing
 		// Two image entries with a single image part in the body, so the
 		// second entry's local index is past the end of the image part list.
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "hash-have", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
-			{Modality: ModalityImage, Hash: "hash-gap", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "hash-have", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "hash-gap", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
 		},
 	}
 
@@ -1816,7 +1816,7 @@ func TestEncodeStep_ResponsesFormat_CollapsesToGenerateWhenNotOpenAIFormat(t *te
 			},
 		},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "hash-tok", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "hash-tok", KwargsData: "dGVzdA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
 		},
 	}
 

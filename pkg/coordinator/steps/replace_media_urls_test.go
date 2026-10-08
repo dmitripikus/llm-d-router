@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -141,8 +142,8 @@ func TestReplaceMediaURLsStep_Responses_DownloadsAndInlines(t *testing.T) {
 	}
 	// The downloaded bytes stay in the body as a data URI (asserted below)
 	// rather than on the entry, so the modality is all the entry carries here.
-	if got := reqCtx.MultimodalEntries[0].Modality; got != ModalityImage {
-		t.Fatalf("entry modality = %q, want %q", got, ModalityImage)
+	if got := reqCtx.MultimodalEntries[0].Modality; got != reqcommon.ModalityImage {
+		t.Fatalf("entry modality = %q, want %q", got, reqcommon.ModalityImage)
 	}
 
 	input := reqCtx.Body["input"].([]any)
@@ -427,8 +428,8 @@ func TestReplaceMediaURLsStep_MixedHTTPAndDataURIOrdering(t *testing.T) {
 				t.Fatalf("expected %d multimodal entries, got %d", len(tt.wantURLs), len(reqCtx.MultimodalEntries))
 			}
 			for i, want := range tt.wantURLs {
-				if got := reqCtx.MultimodalEntries[i].Modality; got != ModalityImage {
-					t.Errorf("entry[%d].Modality = %q, want %q", i, got, ModalityImage)
+				if got := reqCtx.MultimodalEntries[i].Modality; got != reqcommon.ModalityImage {
+					t.Errorf("entry[%d].Modality = %q, want %q", i, got, reqcommon.ModalityImage)
 				}
 				content := reqCtx.Body["messages"].([]any)[0].(map[string]any)["content"].([]any)
 				gotURL := content[i].(map[string]any)["image_url"].(map[string]any)["url"].(string)
@@ -453,7 +454,7 @@ func TestReplaceMediaURLsStep_EntriesMatchTheMediaPartWalk(t *testing.T) {
 		// input_audio is inline, carrying its payload under data, not url.
 		map[string]any{"type": reqcommon.PartTypeInputAudio, reqcommon.PartTypeInputAudio: map[string]any{"data": "aGk=", "format": "wav"}},
 		map[string]any{"type": reqcommon.PartTypeVideoURL, reqcommon.PartTypeVideoURL: map[string]any{"url": "data:video/mp4;base64,aGk="}},
-		// A chat request names an image either way (see partModality).
+		// A chat request names an image either way (see reqcommon.PartModality).
 		map[string]any{"type": reqcommon.PartTypeInputImage, reqcommon.FieldImageURL: "data:image/png;base64,aGk="},
 		// Recognized by neither: passed through untouched.
 		map[string]any{"type": "image_embeds", "image_embeds": map[string]any{}},
@@ -463,7 +464,7 @@ func TestReplaceMediaURLsStep_EntriesMatchTheMediaPartWalk(t *testing.T) {
 
 	// What the shared walk says the answer is, over the same body Execute reads.
 	walked := collectMediaParts(items, reqcommon.APITypeChatCompletions)
-	wantModalities := make([]string, 0, len(walked))
+	wantModalities := make([]reqcommon.Modality, 0, len(walked))
 	for _, media := range walked {
 		wantModalities = append(wantModalities, media.modality)
 	}
@@ -482,11 +483,11 @@ func TestReplaceMediaURLsStep_EntriesMatchTheMediaPartWalk(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	gotModalities := make([]string, 0, len(reqCtx.MultimodalEntries))
+	gotModalities := make([]reqcommon.Modality, 0, len(reqCtx.MultimodalEntries))
 	for _, e := range reqCtx.MultimodalEntries {
 		gotModalities = append(gotModalities, e.Modality)
 	}
-	if !equalStringSlices(gotModalities, wantModalities) {
+	if !slices.Equal(gotModalities, wantModalities) {
 		t.Errorf("Execute produced modalities %v, the walk expects %v", gotModalities, wantModalities)
 	}
 }
@@ -1150,7 +1151,7 @@ func TestReplaceMediaURLsStep_DownloadInvalidURL(t *testing.T) {
 
 	// 0x7f (DEL) is an invalid control character in a URL; NewRequestWithContext
 	// fails before any network call.
-	_, _, err := rmu.download(context.Background(), "http://\x7f/control-char", ModalityImage)
+	_, _, err := rmu.download(context.Background(), "http://\x7f/control-char", reqcommon.ModalityImage)
 	if err == nil {
 		t.Fatal("expected error building request for URL with control character")
 	}
@@ -1206,7 +1207,7 @@ func TestReplaceMediaURLsStep_RejectsOversizedContentLength(t *testing.T) {
 
 	rmu := newLoopbackStep(t, map[string]any{"max_download_size": 1})
 
-	_, _, err := rmu.download(context.Background(), imageServer.URL+"/big.png", ModalityImage)
+	_, _, err := rmu.download(context.Background(), imageServer.URL+"/big.png", reqcommon.ModalityImage)
 	if err == nil {
 		t.Fatal("expected error for oversized Content-Length")
 	}
@@ -1325,7 +1326,7 @@ func TestReplaceMediaURLsStep_DownloadTruncatedBody(t *testing.T) {
 
 	rmu := newLoopbackStep(t, map[string]any{})
 
-	_, _, err := rmu.download(context.Background(), imageServer.URL+"/truncated", ModalityImage)
+	_, _, err := rmu.download(context.Background(), imageServer.URL+"/truncated", reqcommon.ModalityImage)
 	if err == nil {
 		t.Fatal("expected error reading truncated response body")
 	}
@@ -1407,7 +1408,7 @@ func TestAddressGuard_HostAllowed(t *testing.T) {
 func TestReplaceMediaURLsStep_RejectsScheme(t *testing.T) {
 	rmu := newLoopbackStep(t, map[string]any{})
 	for _, raw := range []string{"file:///etc/passwd", "gopher://host/1", "ftp://host/x"} {
-		_, _, err := rmu.download(context.Background(), raw, ModalityImage)
+		_, _, err := rmu.download(context.Background(), raw, reqcommon.ModalityImage)
 		if err == nil {
 			t.Fatalf("expected scheme %q to be rejected", raw)
 		}
@@ -1421,7 +1422,7 @@ func TestReplaceMediaURLsStep_RejectsScheme(t *testing.T) {
 // generic gateway fault, so the handler maps it to a 4xx.
 func TestReplaceMediaURLsStep_BlocksMetadataIP(t *testing.T) {
 	rmu := newLoopbackStep(t, map[string]any{"download_timeout": "2s"})
-	_, _, err := rmu.download(context.Background(), "http://169.254.169.254/latest/meta-data/", ModalityImage)
+	_, _, err := rmu.download(context.Background(), "http://169.254.169.254/latest/meta-data/", reqcommon.ModalityImage)
 	if err == nil {
 		t.Fatal("expected metadata IP fetch to be blocked")
 	}
@@ -1441,7 +1442,7 @@ func TestReplaceMediaURLsStep_BlocksRedirectToPrivate(t *testing.T) {
 	// Loopback allowed so the first hop (the httptest server) connects; the
 	// metadata redirect target is link-local and stays blocked regardless.
 	rmu := newLoopbackStep(t, map[string]any{"download_timeout": "2s"})
-	_, _, err := rmu.download(context.Background(), redirector.URL+"/start", ModalityImage)
+	_, _, err := rmu.download(context.Background(), redirector.URL+"/start", reqcommon.ModalityImage)
 	if err == nil {
 		t.Fatal("expected redirect to metadata IP to be blocked")
 	}
@@ -1469,7 +1470,7 @@ func TestReplaceMediaURLsStep_BlocksHostnameResolvingToPrivate(t *testing.T) {
 		t.Fatal(err)
 	}
 	step := built.(*ReplaceMediaURLsStep)
-	_, _, err = step.download(context.Background(), "http://localhost:"+port+"/x", ModalityImage)
+	_, _, err = step.download(context.Background(), "http://localhost:"+port+"/x", reqcommon.ModalityImage)
 	if err == nil {
 		t.Fatal("expected hostname resolving to loopback to be blocked")
 	}
@@ -1494,12 +1495,12 @@ func TestReplaceMediaURLsStep_DomainAllowlist(t *testing.T) {
 	}
 
 	allowed := newLoopbackStep(t, map[string]any{"allowed_domains": []any{hostname}})
-	if _, _, err := allowed.download(context.Background(), server.URL+"/ok.png", ModalityImage); err != nil {
+	if _, _, err := allowed.download(context.Background(), server.URL+"/ok.png", reqcommon.ModalityImage); err != nil {
 		t.Fatalf("listed host must be fetchable: %v", err)
 	}
 
 	denied := newLoopbackStep(t, map[string]any{"allowed_domains": []any{"images.example.com"}})
-	_, _, err = denied.download(context.Background(), server.URL+"/ok.png", ModalityImage)
+	_, _, err = denied.download(context.Background(), server.URL+"/ok.png", reqcommon.ModalityImage)
 	if err == nil {
 		t.Fatal("unlisted host must be rejected")
 	}
@@ -1655,8 +1656,8 @@ func TestReplaceMediaURLsStep_AudioURL_Downloads(t *testing.T) {
 	if len(reqCtx.MultimodalEntries) != 1 {
 		t.Fatalf("expected 1 audio entry in MultimodalEntries, got %d", len(reqCtx.MultimodalEntries))
 	}
-	if reqCtx.MultimodalEntries[0].Modality != ModalityAudio {
-		t.Fatalf("expected Modality=%q, got %q", ModalityAudio, reqCtx.MultimodalEntries[0].Modality)
+	if reqCtx.MultimodalEntries[0].Modality != reqcommon.ModalityAudio {
+		t.Fatalf("expected Modality=%q, got %q", reqcommon.ModalityAudio, reqCtx.MultimodalEntries[0].Modality)
 	}
 	msgs := reqCtx.Body["messages"].([]any)
 	inner := msgs[0].(map[string]any)["content"].([]any)[0].(map[string]any)["audio_url"].(map[string]any)
@@ -1952,7 +1953,7 @@ func TestReplaceMediaURLsStep_Download_RejectsContentTypeBeforeReadingBody(t *te
 		}, nil
 	})}
 
-	_, _, err := step.download(context.Background(), "http://media.invalid/clip.wav", ModalityAudio)
+	_, _, err := step.download(context.Background(), "http://media.invalid/clip.wav", reqcommon.ModalityAudio)
 	if err == nil {
 		t.Fatal("expected error for audio download served as text/html")
 	}
@@ -2070,8 +2071,8 @@ func TestReplaceMediaURLsStep_VideoURL_Downloads(t *testing.T) {
 	if len(reqCtx.MultimodalEntries) != 1 {
 		t.Fatalf("expected 1 video entry in MultimodalEntries, got %d", len(reqCtx.MultimodalEntries))
 	}
-	if reqCtx.MultimodalEntries[0].Modality != ModalityVideo {
-		t.Fatalf("expected Modality=%q, got %q", ModalityVideo, reqCtx.MultimodalEntries[0].Modality)
+	if reqCtx.MultimodalEntries[0].Modality != reqcommon.ModalityVideo {
+		t.Fatalf("expected Modality=%q, got %q", reqcommon.ModalityVideo, reqCtx.MultimodalEntries[0].Modality)
 	}
 	msgs := reqCtx.Body["messages"].([]any)
 	inner := msgs[0].(map[string]any)["content"].([]any)[0].(map[string]any)["video_url"].(map[string]any)
@@ -2107,8 +2108,8 @@ func TestReplaceMediaURLsStep_AudioDataURI(t *testing.T) {
 	if len(reqCtx.MultimodalEntries) != 1 {
 		t.Fatalf("expected 1 audio entry in MultimodalEntries, got %d", len(reqCtx.MultimodalEntries))
 	}
-	if reqCtx.MultimodalEntries[0].Modality != ModalityAudio {
-		t.Fatalf("expected Modality=%q, got %q", ModalityAudio, reqCtx.MultimodalEntries[0].Modality)
+	if reqCtx.MultimodalEntries[0].Modality != reqcommon.ModalityAudio {
+		t.Fatalf("expected Modality=%q, got %q", reqcommon.ModalityAudio, reqCtx.MultimodalEntries[0].Modality)
 	}
 	msgs := reqCtx.Body["messages"].([]any)
 	inner := msgs[0].(map[string]any)["content"].([]any)[0].(map[string]any)["audio_url"].(map[string]any)
@@ -2262,8 +2263,8 @@ func TestReplaceMediaURLsStep_VideoDataURI(t *testing.T) {
 	if len(reqCtx.MultimodalEntries) != 1 {
 		t.Fatalf("expected 1 video entry in MultimodalEntries, got %d", len(reqCtx.MultimodalEntries))
 	}
-	if reqCtx.MultimodalEntries[0].Modality != ModalityVideo {
-		t.Fatalf("expected Modality=%q, got %q", ModalityVideo, reqCtx.MultimodalEntries[0].Modality)
+	if reqCtx.MultimodalEntries[0].Modality != reqcommon.ModalityVideo {
+		t.Fatalf("expected Modality=%q, got %q", reqcommon.ModalityVideo, reqCtx.MultimodalEntries[0].Modality)
 	}
 }
 
@@ -2293,8 +2294,8 @@ func TestReplaceMediaURLsStep_InputAudio_Valid(t *testing.T) {
 		t.Fatalf("expected 1 audio entry in MultimodalEntries, got %d", len(reqCtx.MultimodalEntries))
 	}
 	entry := reqCtx.MultimodalEntries[0]
-	if entry.Modality != ModalityAudio {
-		t.Fatalf("expected Modality=%q, got %q", ModalityAudio, entry.Modality)
+	if entry.Modality != reqcommon.ModalityAudio {
+		t.Fatalf("expected Modality=%q, got %q", reqcommon.ModalityAudio, entry.Modality)
 	}
 	msgs := reqCtx.Body["messages"].([]any)
 	inner := msgs[0].(map[string]any)["content"].([]any)[0].(map[string]any)["input_audio"].(map[string]any)
@@ -2587,7 +2588,7 @@ func TestReplaceMediaURLsStep_MixedImageAudioVideo(t *testing.T) {
 	if len(reqCtx.MultimodalEntries) != 3 {
 		t.Fatalf("expected 3 entries (1 image + 1 audio + 1 video), got %d", len(reqCtx.MultimodalEntries))
 	}
-	wantModalities := []string{ModalityImage, ModalityAudio, ModalityVideo}
+	wantModalities := []reqcommon.Modality{reqcommon.ModalityImage, reqcommon.ModalityAudio, reqcommon.ModalityVideo}
 	for i, want := range wantModalities {
 		if got := reqCtx.MultimodalEntries[i].Modality; got != want {
 			t.Errorf("MultimodalEntries[%d].Modality = %q, want %q", i, got, want)
@@ -2665,7 +2666,7 @@ func TestReplaceMediaURLsStep_MixedAudio_WalkerOrder(t *testing.T) {
 	// entries would break this pairing silently.
 	items, _ := promptItems(reqCtx.Body, reqcommon.APITypeChatCompletions)
 	partsByMod := groupMediaPartsByModality(collectMediaParts(items, reqcommon.APITypeChatCompletions))
-	audioParts := partsByMod[ModalityAudio]
+	audioParts := partsByMod[reqcommon.ModalityAudio]
 	if got := len(audioParts); got != 2 {
 		t.Fatalf("partsByMod[audio] len = %d, want 2", got)
 	}
@@ -3037,7 +3038,7 @@ func TestReplaceMediaURLsStep_ExplicitImageAllowlistEnablesDownloadCheck(t *test
 			if err != nil {
 				t.Fatal(err)
 			}
-			got := step.(*ReplaceMediaURLsStep).enforceDownloadContentType(ModalityImage)
+			got := step.(*ReplaceMediaURLsStep).enforceDownloadContentType(reqcommon.ModalityImage)
 			if got != tc.want {
 				t.Fatalf("enforceDownloadContentType(image) = %v, want %v", got, tc.want)
 			}
@@ -3079,16 +3080,16 @@ func TestParsePerModalityContentTypes_DoesNotAliasDefaults(t *testing.T) {
 		t.Fatalf("parsePerModalityContentTypes returned error: %v", err)
 	}
 	const poison = "application/x-poison"
-	first[ModalityImage][poison] = struct{}{}
+	first[reqcommon.ModalityImage][poison] = struct{}{}
 
 	second, _, err := parsePerModalityContentTypes(nil)
 	if err != nil {
 		t.Fatalf("parsePerModalityContentTypes returned error: %v", err)
 	}
-	if _, leaked := second[ModalityImage][poison]; leaked {
+	if _, leaked := second[reqcommon.ModalityImage][poison]; leaked {
 		t.Fatal("mutation of first result reached defaults and leaked into second result")
 	}
-	if _, leaked := defaultAllowedContentTypesByModality[ModalityImage][poison]; leaked {
+	if _, leaked := defaultAllowedContentTypesByModality[reqcommon.ModalityImage][poison]; leaked {
 		t.Fatal("mutation of first result reached package-level defaults")
 	}
 }
@@ -3137,8 +3138,8 @@ func TestReplaceMediaURLsStep_ChatCompletionsInputImage(t *testing.T) {
 	if len(reqCtx.MultimodalEntries) != 1 {
 		t.Fatalf("expected the input_image part to produce 1 multimodal entry, got %d", len(reqCtx.MultimodalEntries))
 	}
-	if got := reqCtx.MultimodalEntries[0].Modality; got != ModalityImage {
-		t.Errorf("entry modality = %q, want %q", got, ModalityImage)
+	if got := reqCtx.MultimodalEntries[0].Modality; got != reqcommon.ModalityImage {
+		t.Errorf("entry modality = %q, want %q", got, reqcommon.ModalityImage)
 	}
 
 	msgs := reqCtx.Body["messages"].([]any)
@@ -3250,7 +3251,7 @@ func TestReplaceMediaURLsStep_Responses_InlinesFunctionCallOutputImage(t *testin
 }
 
 // TestReplaceMediaURLsStep_ResponsesIgnoresChatImagePart is the other half of
-// partModality's rule. The Responses input union does not define image_url, so a
+// reqcommon.PartModality's rule. The Responses input union does not define image_url, so a
 // request carrying one fails the model server's input validation and no worker
 // sees it. Collecting it here would download an image the request never uses
 // and leave an entry the render service reports no hash for, failing the

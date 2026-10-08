@@ -32,15 +32,6 @@ const (
 	ParamECConnector = "ec_connector"
 )
 
-// Modality* identify a MultimodalEntry's payload kind and key the per-modality
-// feature maps (mm_hashes, mm_placeholders, kwargs_data). Values mirror EPP's
-// modality enum at pkg/epp/framework/interface/requesthandling/types.go.
-const (
-	ModalityImage = "image"
-	ModalityAudio = "audio"
-	ModalityVideo = "video"
-)
-
 func buildKVConnector(params map[string]any) (kv.Connector, error) {
 	name, err := paramString(params, ParamKVConnector)
 	if err != nil {

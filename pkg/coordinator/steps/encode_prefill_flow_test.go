@@ -122,8 +122,8 @@ func TestEncodeToPrefill_ECTransferParamsFlow(t *testing.T) {
 		Model:     "llama-3",
 		TokenIDs:  []int{1, 32000, 32000, 32000, 32000, 32000, 32000, 2345},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "img-hash-1", KwargsData: "dDE=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
-			{Modality: ModalityImage, Hash: "img-hash-2", KwargsData: "dDI=", Placeholder: pipeline.PlaceholderRange{Offset: 4, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "img-hash-1", KwargsData: "dDE=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "img-hash-2", KwargsData: "dDI=", Placeholder: pipeline.PlaceholderRange{Offset: 4, Length: 3}},
 		},
 		KVTransferParams: make(map[string]any),
 	}
@@ -166,14 +166,14 @@ func TestEncodeToPrefill_ECTransferParamsFlow(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected kwargs_data map in prefill, got %T", features["kwargs_data"])
 	}
-	imageKwargs, _ := kwargsData[ModalityImage].([]any)
+	imageKwargs, _ := kwargsData[string(reqcommon.ModalityImage)].([]any)
 	if len(imageKwargs) != 2 || imageKwargs[0] != "dDE=" || imageKwargs[1] != "dDI=" {
 		t.Fatalf("expected kwargs_data.image=[dDE=,dDI=], got %v", imageKwargs)
 	}
 
 	// Verify mm_hashes in features
 	mmHashes, _ := features["mm_hashes"].(map[string]any)
-	imageHashes, _ := mmHashes[ModalityImage].([]any)
+	imageHashes, _ := mmHashes[string(reqcommon.ModalityImage)].([]any)
 	if len(imageHashes) != 2 {
 		t.Fatalf("expected 2 mm_hashes in prefill features, got %d", len(imageHashes))
 	}
@@ -237,8 +237,8 @@ func TestEncodeToPrefill_PartialECResponse(t *testing.T) {
 		Model:     "llama-3",
 		TokenIDs:  []int{1, 32000, 32000, 32000, 32000, 32000, 32000, 2345},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "img-hash-1", KwargsData: "dDE=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
-			{Modality: ModalityImage, Hash: "img-hash-2", KwargsData: "dDI=", Placeholder: pipeline.PlaceholderRange{Offset: 4, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "img-hash-1", KwargsData: "dDE=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "img-hash-2", KwargsData: "dDI=", Placeholder: pipeline.PlaceholderRange{Offset: 4, Length: 3}},
 		},
 		KVTransferParams: make(map[string]any),
 	}
@@ -316,9 +316,9 @@ func TestEncodeToPrefill_MixedModalityECFlow(t *testing.T) {
 		Model:     "llama-3",
 		TokenIDs:  []int{1, 32000, 32000, 32000, 51000, 51000, 71000, 71000, 71000, 2345},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "img-hash", KwargsData: "aW1n", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
-			{Modality: ModalityAudio, Hash: "aud-hash", KwargsData: "YXVk", Placeholder: pipeline.PlaceholderRange{Offset: 4, Length: 2}},
-			{Modality: ModalityVideo, Hash: "vid-hash", KwargsData: "dmlk", Placeholder: pipeline.PlaceholderRange{Offset: 6, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "img-hash", KwargsData: "aW1n", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Modality: reqcommon.ModalityAudio, Hash: "aud-hash", KwargsData: "YXVk", Placeholder: pipeline.PlaceholderRange{Offset: 4, Length: 2}},
+			{Modality: reqcommon.ModalityVideo, Hash: "vid-hash", KwargsData: "dmlk", Placeholder: pipeline.PlaceholderRange{Offset: 6, Length: 3}},
 		},
 		KVTransferParams: make(map[string]any),
 	}
@@ -335,9 +335,9 @@ func TestEncodeToPrefill_MixedModalityECFlow(t *testing.T) {
 	}
 
 	wantSeen := map[string]string{
-		ModalityImage: "img-hash",
-		ModalityAudio: "aud-hash",
-		ModalityVideo: "vid-hash",
+		string(reqcommon.ModalityImage): "img-hash",
+		string(reqcommon.ModalityAudio): "aud-hash",
+		string(reqcommon.ModalityVideo): "vid-hash",
 	}
 	mu.Lock()
 	gotSeen := maps.Clone(seen)
@@ -367,10 +367,10 @@ func TestEncodeToPrefill_MixedModalityECFlow(t *testing.T) {
 	features, _ := prefillBody["features"].(map[string]any)
 	for _, f := range []struct {
 		field string
-		want  map[string]string
+		want  map[reqcommon.Modality]string
 	}{
-		{"mm_hashes", map[string]string{ModalityImage: "img-hash", ModalityAudio: "aud-hash", ModalityVideo: "vid-hash"}},
-		{"kwargs_data", map[string]string{ModalityImage: "aW1n", ModalityAudio: "YXVk", ModalityVideo: "dmlk"}},
+		{"mm_hashes", map[reqcommon.Modality]string{reqcommon.ModalityImage: "img-hash", reqcommon.ModalityAudio: "aud-hash", reqcommon.ModalityVideo: "vid-hash"}},
+		{"kwargs_data", map[reqcommon.Modality]string{reqcommon.ModalityImage: "aW1n", reqcommon.ModalityAudio: "YXVk", reqcommon.ModalityVideo: "dmlk"}},
 	} {
 		byMod, ok := features[f.field].(map[string]any)
 		if !ok {
@@ -381,9 +381,9 @@ func TestEncodeToPrefill_MixedModalityECFlow(t *testing.T) {
 			t.Errorf("%s has %d modalities, want %d: %v", f.field, len(byMod), len(f.want), byMod)
 		}
 		for mod, want := range f.want {
-			items, _ := byMod[mod].([]any)
+			items, _ := byMod[string(mod)].([]any)
 			if len(items) != 1 || items[0] != want {
-				t.Errorf("%s[%s] = %v, want [%s]", f.field, mod, byMod[mod], want)
+				t.Errorf("%s[%s] = %v, want [%s]", f.field, mod, byMod[string(mod)], want)
 			}
 		}
 	}

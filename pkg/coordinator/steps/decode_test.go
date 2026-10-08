@@ -127,7 +127,7 @@ func TestDecodeStep_NonStreaming(t *testing.T) {
 		Stream:       false,
 		TokenIDs:     []int{1, 32000, 32000, 32000, 2345},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: testImageHash, Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: testImageHash, Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
 		},
 		KVTransferParams: map[string]any{"block_id": "xyz", "peer_host": "10.0.0.5", "peer_port": 7777},
 		Body: map[string]any{
@@ -226,7 +226,7 @@ func TestDecodeStep_Responses_NonStreaming(t *testing.T) {
 		Stream:       false,
 		TokenIDs:     []int{1, 32000, 32000, 32000, 2345},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: testImageHash, Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: testImageHash, Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
 		},
 		KVTransferParams: map[string]any{"block_id": "xyz", "peer_host": "10.0.0.5", "peer_port": 7777},
 		Body: map[string]any{
@@ -297,7 +297,7 @@ func TestDecodeStep_IgnoresStrayInputOnChatCompletions(t *testing.T) {
 		Model:        "llama-3",
 		TokenIDs:     []int{1, 32000, 32000, 32000, 2345},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: testImageHash, Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: testImageHash, Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
 		},
 		KVTransferParams: map[string]any{"block_id": "xyz"},
 		Body: map[string]any{
@@ -533,7 +533,7 @@ func TestDecodeStep_Streaming(t *testing.T) {
 		Model:        "test",
 		Stream:       true,
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "h1"},
+			{Modality: reqcommon.ModalityImage, Hash: "h1"},
 		},
 		KVTransferParams: map[string]any{},
 		Body:             map[string]any{"model": "test", "stream": true},
@@ -578,7 +578,7 @@ func TestDecodeStep_GatewayError(t *testing.T) {
 		Model:        "test",
 		Stream:       false,
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "h1"},
+			{Modality: reqcommon.ModalityImage, Hash: "h1"},
 		},
 		KVTransferParams: map[string]any{},
 		Body:             map[string]any{"model": "test", "stream": false},
@@ -710,10 +710,10 @@ func TestInjectUUIDs_TagsAllMediaParts(t *testing.T) {
 			},
 		},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: testHashImage},
-			{Modality: ModalityAudio, Hash: "H-aud-url"},
-			{Modality: ModalityVideo, Hash: "H-vid"},
-			{Modality: ModalityAudio, Hash: "H-input-audio"},
+			{Modality: reqcommon.ModalityImage, Hash: testHashImage},
+			{Modality: reqcommon.ModalityAudio, Hash: "H-aud-url"},
+			{Modality: reqcommon.ModalityVideo, Hash: "H-vid"},
+			{Modality: reqcommon.ModalityAudio, Hash: "H-input-audio"},
 		},
 	}
 	step.injectUUIDs(reqCtx, logr.Discard())
@@ -748,8 +748,8 @@ func TestInjectUUIDs_TagsRepeatedModalityInOrder(t *testing.T) {
 			},
 		},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityAudio, Hash: "H0"},
-			{Modality: ModalityAudio, Hash: "H1"},
+			{Modality: reqcommon.ModalityAudio, Hash: "H0"},
+			{Modality: reqcommon.ModalityAudio, Hash: "H1"},
 		},
 	}
 	step.injectUUIDs(reqCtx, logr.Discard())
@@ -789,8 +789,8 @@ func TestInjectUUIDs_CountsEveryMediaPart(t *testing.T) {
 		// One entry per modality against two parts each, so the second part of
 		// each modality is the surplus one.
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: testHashImage},
-			{Modality: ModalityAudio, Hash: testHashAudio},
+			{Modality: reqcommon.ModalityImage, Hash: testHashImage},
+			{Modality: reqcommon.ModalityAudio, Hash: testHashAudio},
 		},
 	}
 	step.injectUUIDs(reqCtx, logr.Discard())
@@ -837,8 +837,8 @@ func TestInjectUUIDs_ExtraPartForModalityStaysUntagged(t *testing.T) {
 		},
 		// Two audio parts, one audio entry.
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: testHashImage},
-			{Modality: ModalityAudio, Hash: testHashAudio},
+			{Modality: reqcommon.ModalityImage, Hash: testHashImage},
+			{Modality: reqcommon.ModalityAudio, Hash: testHashAudio},
 		},
 	}
 
@@ -960,8 +960,8 @@ func TestDecodeStep_Responses_StampsFunctionCallOutputImage(t *testing.T) {
 		Model:        "llama-3",
 		TokenIDs:     []int{1, 32000, 32000, 2345},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: testImageHash, Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
-			{Modality: ModalityImage, Hash: outputImageHash, Placeholder: pipeline.PlaceholderRange{Offset: 2, Length: 1}},
+			{Modality: reqcommon.ModalityImage, Hash: testImageHash, Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 1}},
+			{Modality: reqcommon.ModalityImage, Hash: outputImageHash, Placeholder: pipeline.PlaceholderRange{Offset: 2, Length: 1}},
 		},
 		KVTransferParams: map[string]any{"block_id": "xyz"},
 		Body: map[string]any{
@@ -1011,7 +1011,7 @@ func TestInjectMediaPartUUIDs_CountMismatch(t *testing.T) {
 	newEntries := func(n int) []pipeline.MultimodalEntry {
 		entries := make([]pipeline.MultimodalEntry, 0, n)
 		for i := 0; i < n; i++ {
-			entries = append(entries, pipeline.MultimodalEntry{Modality: ModalityImage, Hash: fmt.Sprintf("hash-%d", i)})
+			entries = append(entries, pipeline.MultimodalEntry{Modality: reqcommon.ModalityImage, Hash: fmt.Sprintf("hash-%d", i)})
 		}
 		return entries
 	}

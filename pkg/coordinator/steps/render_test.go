@@ -52,9 +52,9 @@ func TestRenderStep_ParsesFullResponse(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"token_ids": []int{1, 32000, 32000, 32000, 32000, 32000, 32000, 2345, 6789},
 			"features": map[string]any{
-				"mm_hashes":       map[string][]string{ModalityImage: {"vllm-hash-a", "vllm-hash-b"}},
-				"mm_placeholders": map[string][]any{ModalityImage: {map[string]any{"offset": 1, "length": 3}, map[string]any{"offset": 4, "length": 3}}},
-				"kwargs_data":     map[string][]string{ModalityImage: {"dGVuc29yLWE=", "dGVuc29yLWI="}},
+				"mm_hashes":       map[reqcommon.Modality][]string{reqcommon.ModalityImage: {"vllm-hash-a", "vllm-hash-b"}},
+				"mm_placeholders": map[reqcommon.Modality][]any{reqcommon.ModalityImage: {map[string]any{"offset": 1, "length": 3}, map[string]any{"offset": 4, "length": 3}}},
+				"kwargs_data":     map[reqcommon.Modality][]string{reqcommon.ModalityImage: {"dGVuc29yLWE=", "dGVuc29yLWI="}},
 			},
 		})
 	}))
@@ -71,8 +71,8 @@ func TestRenderStep_ParsesFullResponse(t *testing.T) {
 		Body:         map[string]any{"model": "gpt-4o", "messages": []any{}},
 		Model:        "gpt-4o",
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage},
-			{Modality: ModalityImage},
+			{Modality: reqcommon.ModalityImage},
+			{Modality: reqcommon.ModalityImage},
 		},
 	}
 
@@ -124,20 +124,17 @@ func TestRenderStep_ChatCompletions_MultipleModalities(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"token_ids": []int{1, 32000, 32000, 32000, 51000, 51000, 71000, 71000, 71000},
 			"features": map[string]any{
-				"mm_hashes": map[string][]string{
-					ModalityImage: {"img-hash"},
-					ModalityAudio: {"aud-hash"},
-					ModalityVideo: {"vid-hash"},
+				"mm_hashes": map[reqcommon.Modality][]string{reqcommon.ModalityImage: {"img-hash"},
+					reqcommon.ModalityAudio: {"aud-hash"},
+					reqcommon.ModalityVideo: {"vid-hash"},
 				},
-				"mm_placeholders": map[string][]any{
-					ModalityImage: {map[string]any{"offset": 1, "length": 3}},
-					ModalityAudio: {map[string]any{"offset": 4, "length": 2}},
-					ModalityVideo: {map[string]any{"offset": 6, "length": 3}},
+				"mm_placeholders": map[reqcommon.Modality][]any{reqcommon.ModalityImage: {map[string]any{"offset": 1, "length": 3}},
+					reqcommon.ModalityAudio: {map[string]any{"offset": 4, "length": 2}},
+					reqcommon.ModalityVideo: {map[string]any{"offset": 6, "length": 3}},
 				},
-				"kwargs_data": map[string][]string{
-					ModalityImage: {"aW1n"},
-					ModalityAudio: {"YXVk"},
-					ModalityVideo: {"dmlk"},
+				"kwargs_data": map[reqcommon.Modality][]string{reqcommon.ModalityImage: {"aW1n"},
+					reqcommon.ModalityAudio: {"YXVk"},
+					reqcommon.ModalityVideo: {"dmlk"},
 				},
 			},
 		})
@@ -158,9 +155,9 @@ func TestRenderStep_ChatCompletions_MultipleModalities(t *testing.T) {
 		Body:         map[string]any{"model": "test-model", "messages": []any{}},
 		Model:        "test-model",
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage},
-			{Modality: ModalityAudio},
-			{Modality: ModalityVideo},
+			{Modality: reqcommon.ModalityImage},
+			{Modality: reqcommon.ModalityAudio},
+			{Modality: reqcommon.ModalityVideo},
 		},
 	}
 
@@ -171,13 +168,13 @@ func TestRenderStep_ChatCompletions_MultipleModalities(t *testing.T) {
 	want := []struct {
 		hash     string
 		kwargs   string
-		modality string
+		modality reqcommon.Modality
 		offset   int
 		length   int
 	}{
-		{"img-hash", "aW1n", ModalityImage, 1, 3},
-		{"aud-hash", "YXVk", ModalityAudio, 4, 2},
-		{"vid-hash", "dmlk", ModalityVideo, 6, 3},
+		{"img-hash", "aW1n", reqcommon.ModalityImage, 1, 3},
+		{"aud-hash", "YXVk", reqcommon.ModalityAudio, 4, 2},
+		{"vid-hash", "dmlk", reqcommon.ModalityVideo, 6, 3},
 	}
 	for i, w := range want {
 		got := reqCtx.MultimodalEntries[i]
@@ -209,7 +206,7 @@ func TestRenderStep_ChatCompletions_RejectsWrongModalitySplit(t *testing.T) {
 	placeholder := func(offset, length int) any {
 		return map[string]any{"offset": offset, "length": length}
 	}
-	imageAudio := []pipeline.MultimodalEntry{{Modality: ModalityImage}, {Modality: ModalityAudio}}
+	imageAudio := []pipeline.MultimodalEntry{{Modality: reqcommon.ModalityImage}, {Modality: reqcommon.ModalityAudio}}
 
 	for _, tc := range []struct {
 		name     string
@@ -223,11 +220,11 @@ func TestRenderStep_ChatCompletions_RejectsWrongModalitySplit(t *testing.T) {
 			name:    "hashes_under_wrong_modality",
 			entries: imageAudio,
 			features: map[string]any{
-				"mm_hashes":       map[string][]string{ModalityAudio: {"aud-hash", "img-hash"}},
-				"mm_placeholders": map[string][]any{ModalityAudio: {placeholder(1, 3), placeholder(4, 2)}},
-				"kwargs_data":     map[string][]string{ModalityAudio: {"YXVk", "aW1n"}},
+				"mm_hashes":       map[reqcommon.Modality][]string{reqcommon.ModalityAudio: {"aud-hash", "img-hash"}},
+				"mm_placeholders": map[reqcommon.Modality][]any{reqcommon.ModalityAudio: {placeholder(1, 3), placeholder(4, 2)}},
+				"kwargs_data":     map[reqcommon.Modality][]string{reqcommon.ModalityAudio: {"YXVk", "aW1n"}},
 			},
-			wantMsg: ModalityImage,
+			wantMsg: string(reqcommon.ModalityImage),
 		},
 		{
 			// Two image entries but one image hash, and the audio slice absorbs
@@ -235,23 +232,20 @@ func TestRenderStep_ChatCompletions_RejectsWrongModalitySplit(t *testing.T) {
 			// short, so rejecting requires comparing idx against its length.
 			name: "short_modality_slice",
 			entries: []pipeline.MultimodalEntry{
-				{Modality: ModalityImage}, {Modality: ModalityImage}, {Modality: ModalityAudio},
+				{Modality: reqcommon.ModalityImage}, {Modality: reqcommon.ModalityImage}, {Modality: reqcommon.ModalityAudio},
 			},
 			features: map[string]any{
-				"mm_hashes": map[string][]string{
-					ModalityImage: {"img-hash"},
-					ModalityAudio: {"aud-hash", "extra-hash"},
+				"mm_hashes": map[reqcommon.Modality][]string{reqcommon.ModalityImage: {"img-hash"},
+					reqcommon.ModalityAudio: {"aud-hash", "extra-hash"},
 				},
-				"mm_placeholders": map[string][]any{
-					ModalityImage: {placeholder(1, 3)},
-					ModalityAudio: {placeholder(4, 2), placeholder(6, 2)},
+				"mm_placeholders": map[reqcommon.Modality][]any{reqcommon.ModalityImage: {placeholder(1, 3)},
+					reqcommon.ModalityAudio: {placeholder(4, 2), placeholder(6, 2)},
 				},
-				"kwargs_data": map[string][]string{
-					ModalityImage: {"aW1n"},
-					ModalityAudio: {"YXVk", "ZXh0"},
+				"kwargs_data": map[reqcommon.Modality][]string{reqcommon.ModalityImage: {"aW1n"},
+					reqcommon.ModalityAudio: {"YXVk", "ZXh0"},
 				},
 			},
-			wantMsg: ModalityImage,
+			wantMsg: string(reqcommon.ModalityImage),
 		},
 		{
 			// Hashes and placeholders split correctly; kwargs_data puts both
@@ -259,17 +253,15 @@ func TestRenderStep_ChatCompletions_RejectsWrongModalitySplit(t *testing.T) {
 			name:    "kwargs_split_disagrees",
 			entries: imageAudio,
 			features: map[string]any{
-				"mm_hashes": map[string][]string{
-					ModalityImage: {"img-hash"},
-					ModalityAudio: {"aud-hash"},
+				"mm_hashes": map[reqcommon.Modality][]string{reqcommon.ModalityImage: {"img-hash"},
+					reqcommon.ModalityAudio: {"aud-hash"},
 				},
-				"mm_placeholders": map[string][]any{
-					ModalityImage: {placeholder(1, 3)},
-					ModalityAudio: {placeholder(4, 2)},
+				"mm_placeholders": map[reqcommon.Modality][]any{reqcommon.ModalityImage: {placeholder(1, 3)},
+					reqcommon.ModalityAudio: {placeholder(4, 2)},
 				},
-				"kwargs_data": map[string][]string{ModalityImage: {"aW1n", "YXVk"}},
+				"kwargs_data": map[reqcommon.Modality][]string{reqcommon.ModalityImage: {"aW1n", "YXVk"}},
 			},
-			wantMsg: ModalityAudio,
+			wantMsg: string(reqcommon.ModalityAudio),
 		},
 		{
 			// Three hashes for two entries: the aggregate check rejects this
@@ -277,17 +269,14 @@ func TestRenderStep_ChatCompletions_RejectsWrongModalitySplit(t *testing.T) {
 			name:    "total_count_mismatch",
 			entries: imageAudio,
 			features: map[string]any{
-				"mm_hashes": map[string][]string{
-					ModalityImage: {"img-hash", "extra-hash"},
-					ModalityAudio: {"aud-hash"},
+				"mm_hashes": map[reqcommon.Modality][]string{reqcommon.ModalityImage: {"img-hash", "extra-hash"},
+					reqcommon.ModalityAudio: {"aud-hash"},
 				},
-				"mm_placeholders": map[string][]any{
-					ModalityImage: {placeholder(1, 3)},
-					ModalityAudio: {placeholder(4, 2)},
+				"mm_placeholders": map[reqcommon.Modality][]any{reqcommon.ModalityImage: {placeholder(1, 3)},
+					reqcommon.ModalityAudio: {placeholder(4, 2)},
 				},
-				"kwargs_data": map[string][]string{
-					ModalityImage: {"aW1n"},
-					ModalityAudio: {"YXVk"},
+				"kwargs_data": map[reqcommon.Modality][]string{reqcommon.ModalityImage: {"aW1n"},
+					reqcommon.ModalityAudio: {"YXVk"},
 				},
 			},
 			wantMsg: "mm_hashes",
@@ -338,9 +327,9 @@ func TestRenderStep_RunsEvenWithNoMultimodal(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"token_ids": []int{1, 2345, 6789},
 			"features": map[string]any{
-				"mm_hashes":       map[string][]string{ModalityImage: {}},
-				"mm_placeholders": map[string][]any{ModalityImage: {}},
-				"kwargs_data":     map[string][]string{ModalityImage: {}},
+				"mm_hashes":       map[reqcommon.Modality][]string{reqcommon.ModalityImage: {}},
+				"mm_placeholders": map[reqcommon.Modality][]any{reqcommon.ModalityImage: {}},
+				"kwargs_data":     map[reqcommon.Modality][]string{reqcommon.ModalityImage: {}},
 			},
 		})
 	}))
@@ -377,9 +366,9 @@ func TestRenderStep_Responses_CallsRender(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"token_ids": []int{1, 2345, 6789},
 			"features": map[string]any{
-				"mm_hashes":       map[string][]string{ModalityImage: {}},
-				"mm_placeholders": map[string][]any{ModalityImage: {}},
-				"kwargs_data":     map[string][]string{ModalityImage: {}},
+				"mm_hashes":       map[reqcommon.Modality][]string{reqcommon.ModalityImage: {}},
+				"mm_placeholders": map[reqcommon.Modality][]any{reqcommon.ModalityImage: {}},
+				"kwargs_data":     map[reqcommon.Modality][]string{reqcommon.ModalityImage: {}},
 			},
 		})
 	}))
@@ -509,9 +498,9 @@ func TestRenderStep_RejectsTooManyTotalTokens_ChatCompletions(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"token_ids": []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10},
 			"features": map[string]any{
-				"mm_hashes":       map[string][]string{ModalityImage: {}},
-				"mm_placeholders": map[string][]any{ModalityImage: {}},
-				"kwargs_data":     map[string][]string{ModalityImage: {}},
+				"mm_hashes":       map[reqcommon.Modality][]string{reqcommon.ModalityImage: {}},
+				"mm_placeholders": map[reqcommon.Modality][]any{reqcommon.ModalityImage: {}},
+				"kwargs_data":     map[reqcommon.Modality][]string{reqcommon.ModalityImage: {}},
 			},
 		})
 	}))
@@ -623,9 +612,9 @@ func TestRenderStep_RejectsTooManyPlaceholderTokens(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"token_ids": []int{1, 100, 100, 100, 100, 100, 100, 100, 200},
 			"features": map[string]any{
-				"mm_hashes":       map[string][]string{ModalityImage: {"h0", "h1"}},
-				"mm_placeholders": map[string][]any{ModalityImage: {map[string]any{"offset": 1, "length": 4}, map[string]any{"offset": 5, "length": 3}}},
-				"kwargs_data":     map[string][]string{ModalityImage: {"AAAA", "AAAA"}},
+				"mm_hashes":       map[reqcommon.Modality][]string{reqcommon.ModalityImage: {"h0", "h1"}},
+				"mm_placeholders": map[reqcommon.Modality][]any{reqcommon.ModalityImage: {map[string]any{"offset": 1, "length": 4}, map[string]any{"offset": 5, "length": 3}}},
+				"kwargs_data":     map[reqcommon.Modality][]string{reqcommon.ModalityImage: {"AAAA", "AAAA"}},
 			},
 		})
 	}))
@@ -638,8 +627,8 @@ func TestRenderStep_RejectsTooManyPlaceholderTokens(t *testing.T) {
 		OriginalPath: reqcommon.PathChatCompletions,
 		Body:         map[string]any{"model": "test"},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage},
-			{Modality: ModalityImage},
+			{Modality: reqcommon.ModalityImage},
+			{Modality: reqcommon.ModalityImage},
 		},
 	}
 
@@ -660,9 +649,9 @@ func TestRenderStep_AllowsAtPlaceholderLimit(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"token_ids": []int{1, 100, 100, 100, 200},
 			"features": map[string]any{
-				"mm_hashes":       map[string][]string{ModalityImage: {"h0"}},
-				"mm_placeholders": map[string][]any{ModalityImage: {map[string]any{"offset": 1, "length": 3}}},
-				"kwargs_data":     map[string][]string{ModalityImage: {"AAAA"}},
+				"mm_hashes":       map[reqcommon.Modality][]string{reqcommon.ModalityImage: {"h0"}},
+				"mm_placeholders": map[reqcommon.Modality][]any{reqcommon.ModalityImage: {map[string]any{"offset": 1, "length": 3}}},
+				"kwargs_data":     map[reqcommon.Modality][]string{reqcommon.ModalityImage: {"AAAA"}},
 			},
 		})
 	}))
@@ -674,7 +663,7 @@ func TestRenderStep_AllowsAtPlaceholderLimit(t *testing.T) {
 	reqCtx := &pipeline.RequestContext{
 		OriginalPath:      reqcommon.PathChatCompletions,
 		Body:              map[string]any{"model": "test"},
-		MultimodalEntries: []pipeline.MultimodalEntry{{Modality: ModalityImage}},
+		MultimodalEntries: []pipeline.MultimodalEntry{{Modality: reqcommon.ModalityImage}},
 	}
 
 	if err := step.Execute(context.Background(), reqCtx); err != nil {
@@ -692,8 +681,8 @@ func TestRenderStep_PlaceholderLimitOverflow(t *testing.T) {
 	// Two lengths whose sum overflows int and wraps negative. Without the
 	// overflow guard, total > max is false and the limit is silently bypassed.
 	entries := []pipeline.MultimodalEntry{
-		{Modality: ModalityImage, Placeholder: pipeline.PlaceholderRange{Length: math.MaxInt}},
-		{Modality: ModalityImage, Placeholder: pipeline.PlaceholderRange{Length: math.MaxInt}},
+		{Modality: reqcommon.ModalityImage, Placeholder: pipeline.PlaceholderRange{Length: math.MaxInt}},
+		{Modality: reqcommon.ModalityImage, Placeholder: pipeline.PlaceholderRange{Length: math.MaxInt}},
 	}
 	err = rs.checkPlaceholderLimit(entries)
 	if err == nil {
@@ -729,7 +718,7 @@ func TestRenderStep_ServiceError(t *testing.T) {
 	reqCtx := &pipeline.RequestContext{
 		OriginalPath:      reqcommon.PathChatCompletions,
 		Body:              map[string]any{"model": "test"},
-		MultimodalEntries: []pipeline.MultimodalEntry{{Modality: ModalityImage}},
+		MultimodalEntries: []pipeline.MultimodalEntry{{Modality: reqcommon.ModalityImage}},
 	}
 
 	err := step.Execute(context.Background(), reqCtx)
@@ -828,8 +817,8 @@ func TestRenderStep_GenerateFormat_MultipleImages(t *testing.T) {
 		t.Fatalf("expected 2 multimodal entries, got %d", len(reqCtx.MultimodalEntries))
 	}
 	want := []pipeline.MultimodalEntry{
-		{Modality: ModalityImage, Hash: "abc123", KwargsData: "dGVuc29yMA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 2}},
-		{Modality: ModalityImage, Hash: "def456", KwargsData: "dGVuc29yMQ==", Placeholder: pipeline.PlaceholderRange{Offset: 4, Length: 2}},
+		{Modality: reqcommon.ModalityImage, Hash: "abc123", KwargsData: "dGVuc29yMA==", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 2}},
+		{Modality: reqcommon.ModalityImage, Hash: "def456", KwargsData: "dGVuc29yMQ==", Placeholder: pipeline.PlaceholderRange{Offset: 4, Length: 2}},
 	}
 	for i, w := range want {
 		if reqCtx.MultimodalEntries[i] != w {
@@ -884,9 +873,9 @@ func TestRenderStep_GenerateFormat_MultipleModalities(t *testing.T) {
 		t.Fatalf("expected 3 multimodal entries, got %d", len(reqCtx.MultimodalEntries))
 	}
 	want := []pipeline.MultimodalEntry{
-		{Modality: ModalityAudio, Hash: "aud-hash", KwargsData: "YXVkaW8=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 2}},
-		{Modality: ModalityImage, Hash: "img-hash", KwargsData: "aW1hZ2U=", Placeholder: pipeline.PlaceholderRange{Offset: 4, Length: 3}},
-		{Modality: ModalityVideo, Hash: "vid-hash", KwargsData: "dmlkZW8=", Placeholder: pipeline.PlaceholderRange{Offset: 8, Length: 2}},
+		{Modality: reqcommon.ModalityAudio, Hash: "aud-hash", KwargsData: "YXVkaW8=", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 2}},
+		{Modality: reqcommon.ModalityImage, Hash: "img-hash", KwargsData: "aW1hZ2U=", Placeholder: pipeline.PlaceholderRange{Offset: 4, Length: 3}},
+		{Modality: reqcommon.ModalityVideo, Hash: "vid-hash", KwargsData: "dmlkZW8=", Placeholder: pipeline.PlaceholderRange{Offset: 8, Length: 2}},
 	}
 	for i, w := range want {
 		if reqCtx.MultimodalEntries[i] != w {
@@ -1049,7 +1038,7 @@ func TestRenderStep_EntryWithoutModalityFails(t *testing.T) {
 		Model:        "test-model",
 		Body:         map[string]any{"model": "test-model", "messages": []any{}},
 		MultimodalEntries: []pipeline.MultimodalEntry{
-			{Modality: ModalityImage},
+			{Modality: reqcommon.ModalityImage},
 			{},
 		},
 	}
@@ -1091,9 +1080,9 @@ func TestRenderStep_RejectsFeatureCountMismatch(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"token_ids": []int{1, 32000, 32000, 32000, 32000, 32000, 32000, 2345},
 					"features": map[string]any{
-						"mm_hashes":       map[string][]string{ModalityImage: tc.hashes},
-						"mm_placeholders": map[string][]any{ModalityImage: tc.placeholders},
-						"kwargs_data":     map[string][]string{ModalityImage: tc.kwargs},
+						"mm_hashes":       map[reqcommon.Modality][]string{reqcommon.ModalityImage: tc.hashes},
+						"mm_placeholders": map[reqcommon.Modality][]any{reqcommon.ModalityImage: tc.placeholders},
+						"kwargs_data":     map[reqcommon.Modality][]string{reqcommon.ModalityImage: tc.kwargs},
 					},
 				})
 			}))
@@ -1110,7 +1099,7 @@ func TestRenderStep_RejectsFeatureCountMismatch(t *testing.T) {
 			// would fail these cases for an unrelated reason.
 			mmEntries := make([]pipeline.MultimodalEntry, entries)
 			for i := range mmEntries {
-				mmEntries[i].Modality = ModalityImage
+				mmEntries[i].Modality = reqcommon.ModalityImage
 			}
 			reqCtx := &pipeline.RequestContext{
 				OriginalPath:      reqcommon.PathResponses,

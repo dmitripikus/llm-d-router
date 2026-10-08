@@ -23,7 +23,7 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"sort"
+	"slices"
 
 	"github.com/go-logr/logr"
 
@@ -171,45 +171,12 @@ func promptItems(body map[string]any, apiType reqcommon.APIType) ([]any, bool) {
 	return items, ok
 }
 
-// partModality reports the Modality a content part of type partType names on a
-// request to apiType. ok is false for a part type that names no media, which
-// the walkers pass over (text, tool_use, image_embeds, unknown).
-//
-// A chat-completions request may name an image either way: vLLM's chat parser
-// primes input_image and image_url through the same content part map, so an
-// input_image on a chat request reaches the model and has to be walked. It
-// alone also carries the audio and video part types, inline or by URL.
-//
-// A Responses request names an image input_image only, and names no audio or
-// video at all: its input content union is input_text / input_image /
-// input_file, so a Responses request carrying any of the others fails the model
-// server's input validation before a worker sees it. Collecting one would build
-// an entry whose placeholder tokens no worker ever produces. The sidecar's
-// encoder fan-out applies the same rule.
-func partModality(partType string, apiType reqcommon.APIType) (modality string, ok bool) {
-	if partType == reqcommon.PartTypeInputImage {
-		return ModalityImage, true
-	}
-	if apiType == reqcommon.APITypeResponses {
-		return "", false
-	}
-	switch partType {
-	case reqcommon.PartTypeImageURL:
-		return ModalityImage, true
-	case reqcommon.PartTypeAudioURL, reqcommon.PartTypeInputAudio:
-		return ModalityAudio, true
-	case reqcommon.PartTypeVideoURL:
-		return ModalityVideo, true
-	}
-	return "", false
-}
-
 // mediaPart is a media content part together with the modality it names and the
 // body position it was found at, the latter for error messages: "message 0
 // content part 2", "input item 1 output part 0".
 type mediaPart struct {
 	part     map[string]any
-	modality string
+	modality reqcommon.Modality
 	location string
 }
 
@@ -227,7 +194,8 @@ type mediaPart struct {
 // part carries usable media: replace-media-urls rejects an unusable one as it
 // builds the entries (see collectMediaRefs), so filtering here would instead
 // let one through and shift every later part of its modality onto another
-// part's hash. Which part types count is partModality's rule.
+// part's hash. Which part types count is reqcommon.PartModality's rule,
+// shared with the sidecar's encoder fan-out.
 func collectMediaParts(items []any, apiType reqcommon.APIType) []mediaPart {
 	itemLabel := "message"
 	if apiType == reqcommon.APITypeResponses {
@@ -247,7 +215,7 @@ func collectMediaParts(items []any, apiType reqcommon.APIType) []mediaPart {
 					continue
 				}
 				partType, _ := partMap[reqcommon.FieldType].(string)
-				modality, ok := partModality(partType, apiType)
+				modality, ok := reqcommon.PartModality(partType, apiType)
 				if !ok {
 					continue
 				}
@@ -297,8 +265,8 @@ func mediaPartCarriesPayload(part map[string]any) bool {
 // groupMediaPartsByModality indexes a collectMediaParts walk by modality, each
 // list keeping the walk's order. Entries pair with parts within a modality, so
 // this is the shape a step indexes by an entry's per-modality position.
-func groupMediaPartsByModality(parts []mediaPart) map[string][]mediaPart {
-	byMod := make(map[string][]mediaPart)
+func groupMediaPartsByModality(parts []mediaPart) map[reqcommon.Modality][]mediaPart {
+	byMod := make(map[reqcommon.Modality][]mediaPart)
 	for _, p := range parts {
 		byMod[p.modality] = append(byMod[p.modality], p)
 	}
@@ -310,7 +278,7 @@ func groupMediaPartsByModality(parts []mediaPart) map[string][]mediaPart {
 // per-modality part lists and the per-modality render response slots.
 func modalityLocalIndexes(entries []pipeline.MultimodalEntry) []int {
 	local := make([]int, len(entries))
-	counter := make(map[string]int)
+	counter := make(map[reqcommon.Modality]int)
 	for i, entry := range entries {
 		local[i] = counter[entry.Modality]
 		counter[entry.Modality]++
@@ -322,18 +290,22 @@ func modalityLocalIndexes(entries []pipeline.MultimodalEntry) []int {
 // and optionally kwargs_data) from the request's multimodal entries. It returns
 // nil when there are no entries. Entries are grouped by Modality, so a
 // mixed-modality request has one key per modality in each feature map.
+//
+// The per-modality maps are keyed by reqcommon.Modality rather than string:
+// encoding/json keys a map by any string-kind type, so the body on the wire is
+// the same and no conversion stands between an entry and its feature slot.
 func buildMMFeatures(entries []pipeline.MultimodalEntry, includeKwargs bool) map[string]any {
 	if len(entries) == 0 {
 		return nil
 	}
-	hashesByMod := make(map[string][]string)
-	placeholdersByMod := make(map[string][]any)
+	hashesByMod := make(map[reqcommon.Modality][]string)
+	placeholdersByMod := make(map[reqcommon.Modality][]any)
 	// Left nil unless the caller asked for kwargs_data: the decode and
 	// conditional-decode bodies never carry it, and building it there would
 	// allocate a map, a slice per modality, and a box per entry for nothing.
-	var kwargsByMod map[string][]any
+	var kwargsByMod map[reqcommon.Modality][]any
 	if includeKwargs {
-		kwargsByMod = make(map[string][]any)
+		kwargsByMod = make(map[reqcommon.Modality][]any)
 	}
 	for _, entry := range entries {
 		mod := entry.Modality
@@ -390,8 +362,8 @@ func kwargsSentinel(k string) any {
 // singleEntryKwargs builds a kwargs_data value for one entry: each encode
 // fanout sub-request carries exactly one entry's kwargs under its modality
 // key. Used by encode.buildEncodeBody.
-func singleEntryKwargs(modality, kwargs string) map[string][]any {
-	return map[string][]any{modality: {kwargsSentinel(kwargs)}}
+func singleEntryKwargs(modality reqcommon.Modality, kwargs string) map[reqcommon.Modality][]any {
+	return map[reqcommon.Modality][]any{modality: {kwargsSentinel(kwargs)}}
 }
 
 // coerceParamsMap coerces a transfer-params value from an upstream response to a
@@ -479,7 +451,7 @@ func extractTokenIDs(raw any) ([]int, error) {
 // such modality" state rather than an error. A present value of the wrong type
 // is ErrBadRequest, so a malformed request fails loudly instead of reading as
 // absent.
-func mmModalityArray(features map[string]any, field, modality string) (arr []any, present bool, err error) {
+func mmModalityArray(features map[string]any, field string, modality reqcommon.Modality) (arr []any, present bool, err error) {
 	rawField, ok := features[field]
 	if !ok || rawField == nil {
 		return nil, false, nil
@@ -488,7 +460,10 @@ func mmModalityArray(features map[string]any, field, modality string) (arr []any
 	if !ok {
 		return nil, false, fmt.Errorf("%s must be an object: %w", field, pipeline.ErrBadRequest)
 	}
-	raw, ok := m[modality]
+	// The client's features map is keyed by plain JSON strings, so the
+	// modality converts back here: this is the boundary between the typed
+	// vocabulary and whatever keys a request arrived with.
+	raw, ok := m[string(modality)]
 	if !ok || raw == nil {
 		return nil, false, nil
 	}
@@ -506,7 +481,12 @@ func mmModalityArray(features map[string]any, field, modality string) (arr []any
 // because this is where a client-supplied features map becomes entries, and the
 // key becomes MultimodalEntry.Modality, every reader's key for positional
 // pairing; validateEntryModalities states what an untagged entry would cost.
-func modalitiesInFeatures(features map[string]any, field string) ([]string, error) {
+//
+// A key here is whatever the client sent, so this is where the vocabulary opens
+// up: a token-in request may name a modality reqcommon declares no constant
+// for, and the pipeline carries it through rather than refusing a request its
+// model server understands. Only the empty key is rejected.
+func modalitiesInFeatures(features map[string]any, field string) ([]reqcommon.Modality, error) {
 	raw, ok := features[field]
 	if !ok || raw == nil {
 		return nil, nil
@@ -515,7 +495,7 @@ func modalitiesInFeatures(features map[string]any, field string) ([]string, erro
 	if !ok {
 		return nil, fmt.Errorf("%s must be an object: %w", field, pipeline.ErrBadRequest)
 	}
-	var out []string
+	var out []reqcommon.Modality
 	for k, v := range m {
 		if v == nil {
 			continue
@@ -523,9 +503,9 @@ func modalitiesInFeatures(features map[string]any, field string) ([]string, erro
 		if k == "" {
 			return nil, fmt.Errorf("%s has an empty modality key: %w", field, pipeline.ErrBadRequest)
 		}
-		out = append(out, k)
+		out = append(out, reqcommon.Modality(k))
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out, nil
 }
 
@@ -534,8 +514,8 @@ func modalitiesInFeatures(features map[string]any, field string) ([]string, erro
 // become entries, so skipping the extra key would drop the item from the
 // prefill and decode bodies while its placeholder tokens stay in token_ids,
 // leaving the engine placeholders with nothing behind them.
-func checkModalitiesHashed(features map[string]any, hashed []string) error {
-	known := make(map[string]struct{}, len(hashed))
+func checkModalitiesHashed(features map[string]any, hashed []reqcommon.Modality) error {
+	known := make(map[reqcommon.Modality]struct{}, len(hashed))
 	for _, mod := range hashed {
 		known[mod] = struct{}{}
 	}

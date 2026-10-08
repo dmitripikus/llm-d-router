@@ -321,7 +321,7 @@ func (s *RenderStep) applyRenderResponse(ctx context.Context, reqCtx *pipeline.R
 	// by a per-modality position counter: for an image-only request against an
 	// image-only response, modIndex[image] counts 0, 1, 2... and each entry
 	// pairs with the response slot at that position.
-	modIndex := make(map[string]int)
+	modIndex := make(map[reqcommon.Modality]int)
 	for i := range reqCtx.MultimodalEntries {
 		mod := reqCtx.MultimodalEntries[i].Modality
 		idx := modIndex[mod]
@@ -400,9 +400,9 @@ type renderResponse struct {
 }
 
 type renderFeatures struct {
-	MMHashes       map[string][]string                    `json:"mm_hashes"`
-	MMPlaceholders map[string][]pipeline.PlaceholderRange `json:"mm_placeholders"`
-	KwargsData     map[string][]string                    `json:"kwargs_data"`
+	MMHashes       map[reqcommon.Modality][]string                    `json:"mm_hashes"`
+	MMPlaceholders map[reqcommon.Modality][]pipeline.PlaceholderRange `json:"mm_placeholders"`
+	KwargsData     map[reqcommon.Modality][]string                    `json:"kwargs_data"`
 }
 
 // completionsRenderResponse is a minimal view of the per-prompt object returned

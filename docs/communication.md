@@ -1262,14 +1262,12 @@ forwards the `output` array as a tool message's content, so an image in it
 reaches the model like any other part.
 
 The Responses input content union is `input_text` / `input_image` / `input_file`,
-so audio and video reach the pipeline on chat completions only. A Responses
-request carrying an `audio_url`, `video_url`, or `input_audio` part fails the
-model server's own input validation before a worker sees it, so no stage
-collects one: an entry built for such a part would carry placeholder tokens no
-worker ever produces. For the same reason a Responses request names an image
-`input_image` only -- `image_url` is not in the union -- while a chat request
-names one either way, since vLLM's chat parser primes both through the same
-content part map.
+so audio and video reach the pipeline on chat completions only, and a Responses
+request names an image `input_image` only while a chat request names one either
+way. `reqcommon.PartModality` is the single implementation of that rule --
+`pkg/common/request/modality.go`, where its godoc records why each case falls
+the way it does -- and every stage of both the coordinator and the sidecar
+calls it rather than carrying its own copy.
 
 Per stage:
 

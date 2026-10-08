@@ -154,19 +154,20 @@ type RequestContext struct {
 }
 
 // MultimodalEntry describes one downloaded multimodal item (e.g. an image) and
-// where it sits in the tokenized prompt. Modality is the steps.Modality*
-// constant ("image", "audio", "video") for the OpenAI content-part type it came
-// from. Hash and KwargsData are filled in by the render step; Placeholder marks
-// the span of placeholder tokens the encode step replaces. The bytes stay in
-// the request body (data URI or input_audio.data) rather than on the entry, so
-// a large audio or video payload is not duplicated on reqCtx for the request's
-// lifetime.
+// where it sits in the tokenized prompt. Modality names the kind of content the
+// item carries; reqcommon.PartModality derives it from the content-part type
+// for a request that carries parts, and a token-in request's own feature-map
+// key supplies it otherwise. Hash and KwargsData are filled in by the render
+// step; Placeholder marks the span of placeholder tokens the encode step
+// replaces. The bytes stay in the request body (data URI or input_audio.data)
+// rather than on the entry, so a large audio or video payload is not duplicated
+// on reqCtx for the request's lifetime.
 //
 // An entry's position in this slice means nothing on its own: steps pair an
 // entry with its content part by counting entries of the same Modality. See
 // steps.collectMediaParts for the invariant that keeps the two lined up.
 type MultimodalEntry struct {
-	Modality    string
+	Modality    reqcommon.Modality
 	Hash        string
 	KwargsData  string
 	Placeholder PlaceholderRange

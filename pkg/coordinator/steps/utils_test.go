@@ -194,8 +194,8 @@ func TestExtractMultimodalEntries(t *testing.T) {
 			t.Fatalf("expected 2 entries, got %d", len(entries))
 		}
 		want := []pipeline.MultimodalEntry{
-			{Modality: ModalityImage, Hash: "hash1", KwargsData: "d1", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
-			{Modality: ModalityImage, Hash: "hash2", KwargsData: "d2", Placeholder: pipeline.PlaceholderRange{Offset: 5, Length: 2}},
+			{Modality: reqcommon.ModalityImage, Hash: "hash1", KwargsData: "d1", Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 3}},
+			{Modality: reqcommon.ModalityImage, Hash: "hash2", KwargsData: "d2", Placeholder: pipeline.PlaceholderRange{Offset: 5, Length: 2}},
 		}
 		for i, w := range want {
 			if entries[i] != w {
@@ -420,7 +420,7 @@ func TestExtractMultimodalEntries(t *testing.T) {
 func TestValidatePlaceholderBounds(t *testing.T) {
 	entry := func(offset, length int) pipeline.MultimodalEntry {
 		return pipeline.MultimodalEntry{
-			Modality:    ModalityImage,
+			Modality:    reqcommon.ModalityImage,
 			Placeholder: pipeline.PlaceholderRange{Offset: offset, Length: length},
 		}
 	}
@@ -473,7 +473,7 @@ func mmImageKwargs(t *testing.T, features map[string]any) []any {
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		t.Fatalf("unmarshal kwargs_data: %v", err)
 	}
-	return decoded[ModalityImage]
+	return decoded[string(reqcommon.ModalityImage)]
 }
 
 func TestBuildMMFeatures_CacheHitSentinelSerializesAsNull(t *testing.T) {
@@ -481,7 +481,7 @@ func TestBuildMMFeatures_CacheHitSentinelSerializesAsNull(t *testing.T) {
 	// wire it must be JSON null, not "": vLLM decodes "" as an inline tensor and
 	// fails with "Input data was truncated", while null means a cache-hit item.
 	entry := func(kwargs string) pipeline.MultimodalEntry {
-		return pipeline.MultimodalEntry{Modality: ModalityImage, Hash: testHash, KwargsData: kwargs}
+		return pipeline.MultimodalEntry{Modality: reqcommon.ModalityImage, Hash: testHash, KwargsData: kwargs}
 	}
 
 	t.Run("all cache-hit -> all null", func(t *testing.T) {
@@ -523,37 +523,37 @@ func TestBuildMMFeatures_CacheHitSentinelSerializesAsNull(t *testing.T) {
 // alongside image.
 func TestBuildMMFeatures_GroupsByModality(t *testing.T) {
 	entries := []pipeline.MultimodalEntry{
-		{Modality: ModalityImage, Hash: "img-a", KwargsData: "k-img-a",
+		{Modality: reqcommon.ModalityImage, Hash: "img-a", KwargsData: "k-img-a",
 			Placeholder: pipeline.PlaceholderRange{Offset: 1, Length: 2}},
-		{Modality: ModalityAudio, Hash: "aud-a", KwargsData: "k-aud-a",
+		{Modality: reqcommon.ModalityAudio, Hash: "aud-a", KwargsData: "k-aud-a",
 			Placeholder: pipeline.PlaceholderRange{Offset: 4, Length: 3}},
-		{Modality: ModalityImage, Hash: "img-b", KwargsData: "",
+		{Modality: reqcommon.ModalityImage, Hash: "img-b", KwargsData: "",
 			Placeholder: pipeline.PlaceholderRange{Offset: 8, Length: 1}},
-		{Modality: ModalityVideo, Hash: "vid-a", KwargsData: "k-vid-a",
+		{Modality: reqcommon.ModalityVideo, Hash: "vid-a", KwargsData: "k-vid-a",
 			Placeholder: pipeline.PlaceholderRange{Offset: 10, Length: 5}},
 	}
 	features := buildMMFeatures(entries, true)
 
-	hashes, ok := features["mm_hashes"].(map[string][]string)
+	hashes, ok := features["mm_hashes"].(map[reqcommon.Modality][]string)
 	if !ok {
-		t.Fatalf("mm_hashes must be map[string][]string, got %T", features["mm_hashes"])
+		t.Fatalf("mm_hashes must be map[reqcommon.Modality][]string, got %T", features["mm_hashes"])
 	}
-	if got, want := hashes[ModalityImage], []string{"img-a", "img-b"}; !equalStringSlices(got, want) {
+	if got, want := hashes[reqcommon.ModalityImage], []string{"img-a", "img-b"}; !equalStringSlices(got, want) {
 		t.Errorf("mm_hashes[image] = %v, want %v", got, want)
 	}
-	if got, want := hashes[ModalityAudio], []string{"aud-a"}; !equalStringSlices(got, want) {
+	if got, want := hashes[reqcommon.ModalityAudio], []string{"aud-a"}; !equalStringSlices(got, want) {
 		t.Errorf("mm_hashes[audio] = %v, want %v", got, want)
 	}
-	if got, want := hashes[ModalityVideo], []string{"vid-a"}; !equalStringSlices(got, want) {
+	if got, want := hashes[reqcommon.ModalityVideo], []string{"vid-a"}; !equalStringSlices(got, want) {
 		t.Errorf("mm_hashes[video] = %v, want %v", got, want)
 	}
 
 	// kwargs_data preserves the cache-hit-sentinel (empty -> nil) per-modality.
-	kwargs, ok := features["kwargs_data"].(map[string][]any)
+	kwargs, ok := features["kwargs_data"].(map[reqcommon.Modality][]any)
 	if !ok {
-		t.Fatalf("kwargs_data must be map[string][]any, got %T", features["kwargs_data"])
+		t.Fatalf("kwargs_data must be map[reqcommon.Modality][]any, got %T", features["kwargs_data"])
 	}
-	imgKwargs := kwargs[ModalityImage]
+	imgKwargs := kwargs[reqcommon.ModalityImage]
 	if len(imgKwargs) != 2 || imgKwargs[0] != "k-img-a" || imgKwargs[1] != nil {
 		t.Errorf("kwargs_data[image] = %v, want [k-img-a, nil]", imgKwargs)
 	}
@@ -567,7 +567,7 @@ func TestBuildMMFeatures_GroupsByModality(t *testing.T) {
 // guard means a coordinator bug, not bad client input.
 func TestValidateEntryModalities(t *testing.T) {
 	entries := []pipeline.MultimodalEntry{
-		{Modality: ModalityImage, Hash: "h1"},
+		{Modality: reqcommon.ModalityImage, Hash: "h1"},
 		{Hash: "h2"},
 	}
 	err := validateEntryModalities(entries)
@@ -581,7 +581,7 @@ func TestValidateEntryModalities(t *testing.T) {
 		t.Error("an entry with no modality is a coordinator bug, not ErrBadRequest")
 	}
 
-	entries[1].Modality = ModalityAudio
+	entries[1].Modality = reqcommon.ModalityAudio
 	if err := validateEntryModalities(entries); err != nil {
 		t.Errorf("expected no error for fully tagged entries, got %v", err)
 	}
@@ -596,21 +596,21 @@ func TestValidateEntryModalities(t *testing.T) {
 func TestExtractMultimodalEntries_MultiModalityResponse(t *testing.T) {
 	features := map[string]any{
 		"mm_hashes": map[string]any{
-			ModalityImage: []any{"img-a", "img-b"},
-			ModalityAudio: []any{"aud-a"},
+			string(reqcommon.ModalityImage): []any{"img-a", "img-b"},
+			string(reqcommon.ModalityAudio): []any{"aud-a"},
 		},
 		"mm_placeholders": map[string]any{
-			ModalityImage: []any{
+			string(reqcommon.ModalityImage): []any{
 				map[string]any{"offset": float64(1), "length": float64(2)},
 				map[string]any{"offset": float64(4), "length": float64(2)},
 			},
-			ModalityAudio: []any{
+			string(reqcommon.ModalityAudio): []any{
 				map[string]any{"offset": float64(7), "length": float64(5)},
 			},
 		},
 		"kwargs_data": map[string]any{
-			ModalityImage: []any{"k-img-a", "k-img-b"},
-			ModalityAudio: []any{"k-aud-a"},
+			string(reqcommon.ModalityImage): []any{"k-img-a", "k-img-b"},
+			string(reqcommon.ModalityAudio): []any{"k-aud-a"},
 		},
 	}
 	entries, err := extractMultimodalEntries(features)
@@ -621,16 +621,16 @@ func TestExtractMultimodalEntries_MultiModalityResponse(t *testing.T) {
 		t.Fatalf("expected 3 entries (2 image + 1 audio), got %d", len(entries))
 	}
 	// Modalities sorted alphabetically -> audio before image.
-	if entries[0].Modality != ModalityAudio {
-		t.Errorf("entries[0].Modality = %q, want %q", entries[0].Modality, ModalityAudio)
+	if entries[0].Modality != reqcommon.ModalityAudio {
+		t.Errorf("entries[0].Modality = %q, want %q", entries[0].Modality, reqcommon.ModalityAudio)
 	}
 	if entries[0].Hash != "aud-a" {
 		t.Errorf("entries[0].Hash = %q, want aud-a", entries[0].Hash)
 	}
-	if entries[1].Modality != ModalityImage || entries[1].Hash != "img-a" {
+	if entries[1].Modality != reqcommon.ModalityImage || entries[1].Hash != "img-a" {
 		t.Errorf("entries[1] = (%q, %q), want (image, img-a)", entries[1].Modality, entries[1].Hash)
 	}
-	if entries[2].Modality != ModalityImage || entries[2].Hash != "img-b" {
+	if entries[2].Modality != reqcommon.ModalityImage || entries[2].Hash != "img-b" {
 		t.Errorf("entries[2] = (%q, %q), want (image, img-b)", entries[2].Modality, entries[2].Hash)
 	}
 }
@@ -649,35 +649,35 @@ func TestExtractMultimodalEntries_UnhashedModalityRejected(t *testing.T) {
 		{
 			name: "mm_placeholders_only",
 			features: map[string]any{
-				"mm_hashes": map[string]any{ModalityImage: []any{"img-a"}},
+				"mm_hashes": map[string]any{string(reqcommon.ModalityImage): []any{"img-a"}},
 				"mm_placeholders": map[string]any{
-					ModalityImage: []any{placeholder(1, 2)},
-					ModalityAudio: []any{placeholder(4, 2)},
+					string(reqcommon.ModalityImage): []any{placeholder(1, 2)},
+					string(reqcommon.ModalityAudio): []any{placeholder(4, 2)},
 				},
 			},
 		},
 		{
 			name: "kwargs_data_only",
 			features: map[string]any{
-				"mm_hashes":       map[string]any{ModalityImage: []any{"img-a"}},
-				"mm_placeholders": map[string]any{ModalityImage: []any{placeholder(1, 2)}},
+				"mm_hashes":       map[string]any{string(reqcommon.ModalityImage): []any{"img-a"}},
+				"mm_placeholders": map[string]any{string(reqcommon.ModalityImage): []any{placeholder(1, 2)}},
 				"kwargs_data": map[string]any{
-					ModalityImage: []any{"k-img-a"},
-					ModalityAudio: []any{"k-aud-a"},
+					string(reqcommon.ModalityImage): []any{"k-img-a"},
+					string(reqcommon.ModalityAudio): []any{"k-aud-a"},
 				},
 			},
 		},
 		{
 			name: "no_mm_hashes_at_all",
 			features: map[string]any{
-				"mm_placeholders": map[string]any{ModalityAudio: []any{placeholder(1, 2)}},
+				"mm_placeholders": map[string]any{string(reqcommon.ModalityAudio): []any{placeholder(1, 2)}},
 			},
 		},
 		{
 			name: "empty_hash_list_with_placeholder",
 			features: map[string]any{
-				"mm_hashes":       map[string]any{ModalityAudio: []any{}},
-				"mm_placeholders": map[string]any{ModalityAudio: []any{placeholder(1, 2)}},
+				"mm_hashes":       map[string]any{string(reqcommon.ModalityAudio): []any{}},
+				"mm_placeholders": map[string]any{string(reqcommon.ModalityAudio): []any{placeholder(1, 2)}},
 			},
 		},
 	}
@@ -720,12 +720,12 @@ func TestExtractMultimodalEntries_EmptyModalityKeyRejected(t *testing.T) {
 			name: "alongside_a_named_modality",
 			features: map[string]any{
 				"mm_hashes": map[string]any{
-					ModalityImage: []any{"img-a"},
-					"":            []any{"ghost"},
+					string(reqcommon.ModalityImage): []any{"img-a"},
+					"":                              []any{"ghost"},
 				},
 				"mm_placeholders": map[string]any{
-					ModalityImage: []any{placeholder(1, 2)},
-					"":            []any{placeholder(4, 2)},
+					string(reqcommon.ModalityImage): []any{placeholder(1, 2)},
+					"":                              []any{placeholder(4, 2)},
 				},
 			},
 		},
@@ -751,13 +751,13 @@ func TestExtractMultimodalEntries_EmptyModalityListAccepted(t *testing.T) {
 	}{
 		{
 			name:     "placeholders_absent",
-			features: map[string]any{"mm_hashes": map[string]any{ModalityAudio: []any{}}},
+			features: map[string]any{"mm_hashes": map[string]any{string(reqcommon.ModalityAudio): []any{}}},
 		},
 		{
 			name: "placeholders_also_empty",
 			features: map[string]any{
-				"mm_hashes":       map[string]any{ModalityAudio: []any{}},
-				"mm_placeholders": map[string]any{ModalityAudio: []any{}},
+				"mm_hashes":       map[string]any{string(reqcommon.ModalityAudio): []any{}},
+				"mm_placeholders": map[string]any{string(reqcommon.ModalityAudio): []any{}},
 			},
 		},
 	} {

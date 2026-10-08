@@ -104,7 +104,7 @@ func (s *EncodeStep) Execute(ctx context.Context, reqCtx *pipeline.RequestContex
 	responseHeaders := make([]http.Header, len(reqCtx.MultimodalEntries))
 
 	format := resolveFormat(s.useOpenAIFormat, reqCtx.OriginalPath)
-	var partsByMod map[string][]mediaPart
+	var partsByMod map[reqcommon.Modality][]mediaPart
 	if items, ok := promptItems(reqCtx.Body, format); ok {
 		partsByMod = groupMediaPartsByModality(collectMediaParts(items, format))
 	}
@@ -148,7 +148,7 @@ func (s *EncodeStep) executeOne(
 	entry pipeline.MultimodalEntry,
 	localIdx int,
 	format reqcommon.APIType,
-	partsByMod map[string][]mediaPart,
+	partsByMod map[reqcommon.Modality][]mediaPart,
 ) (map[string]any, http.Header, error) {
 	logger = logger.WithValues("index", index)
 
@@ -227,7 +227,7 @@ func (s *EncodeStep) buildEncodeTokenIDs(fullTokenIDs []int, entry pipeline.Mult
 // buildEncodeBody builds one fanout sub-request. localIdx is the entry's
 // position among the entries sharing its modality, resolved by Execute; the
 // modality itself comes off the entry.
-func (s *EncodeStep) buildEncodeBody(reqCtx *pipeline.RequestContext, entry pipeline.MultimodalEntry, localIdx int, format reqcommon.APIType, partsByMod map[string][]mediaPart) (map[string]any, error) {
+func (s *EncodeStep) buildEncodeBody(reqCtx *pipeline.RequestContext, entry pipeline.MultimodalEntry, localIdx int, format reqcommon.APIType, partsByMod map[reqcommon.Modality][]mediaPart) (map[string]any, error) {
 	mod := entry.Modality
 	switch format {
 	case reqcommon.APITypeChatCompletions, reqcommon.APITypeResponses:
@@ -258,8 +258,8 @@ func (s *EncodeStep) buildEncodeBody(reqCtx *pipeline.RequestContext, entry pipe
 			"model":     reqCtx.Model,
 			"token_ids": s.buildEncodeTokenIDs(reqCtx.TokenIDs, entry),
 			"features": map[string]any{
-				"mm_hashes":       map[string][]string{mod: {entry.Hash}},
-				"mm_placeholders": map[string][]any{mod: {map[string]any{"offset": 1, "length": entry.Placeholder.Length}}},
+				"mm_hashes":       map[reqcommon.Modality][]string{mod: {entry.Hash}},
+				"mm_placeholders": map[reqcommon.Modality][]any{mod: {map[string]any{"offset": 1, "length": entry.Placeholder.Length}}},
 				"kwargs_data":     singleEntryKwargs(mod, entry.KwargsData),
 			},
 		}

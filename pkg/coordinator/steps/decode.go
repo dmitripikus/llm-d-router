@@ -134,12 +134,12 @@ func injectMediaPartUUIDs(items []any, apiType reqcommon.APIType, entries []pipe
 	// Group hashes by modality in entry order, so the walk below can index
 	// hashesByMod[modality] at the per-modality position: O(1) per part after
 	// an O(n) build.
-	hashesByMod := make(map[string][]string)
+	hashesByMod := make(map[reqcommon.Modality][]string)
 	for _, entry := range entries {
 		hashesByMod[entry.Modality] = append(hashesByMod[entry.Modality], entry.Hash)
 	}
 
-	modCounter := make(map[string]int)
+	modCounter := make(map[reqcommon.Modality]int)
 	for _, media := range collectMediaParts(items, apiType) {
 		localIdx := modCounter[media.modality]
 		modCounter[media.modality]++
