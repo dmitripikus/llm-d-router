@@ -687,6 +687,7 @@ func TestDecodeStep_TransportError(t *testing.T) {
 const (
 	testHashImage = "H-img"
 	testHashAudio = "H-aud"
+	testHashVideo = "H-vid"
 )
 
 // Every recognized media content-part type receives a uuid tag matching its
@@ -814,9 +815,11 @@ func TestInjectUUIDs_CountsEveryMediaPart(t *testing.T) {
 //
 // Degrading rather than failing is deliberate, and differs from the encode step
 // on purpose: uuid is only the decode backend's prefix-cache key, so an
-// untagged part still carries its payload and the request stays correct, at the
-// cost of a cache lookup. The encode fanout fails on the same mismatch because
-// it would otherwise pair an entry with another part's bytes.
+// untagged part still carries its payload and the request stays correct. What
+// it costs is the worker hashing and re-processing that media, which is cheap
+// for an image and is not for audio or video. The encode fanout fails on the
+// same mismatch because it would otherwise pair an entry with another part's
+// bytes.
 //
 // The surplus parts are the trailing ones, so every earlier part keeps the hash
 // it would have received anyway. Asserting the key's absence, rather than a
@@ -863,6 +866,67 @@ func TestInjectUUIDs_ExtraPartForModalityStaysUntagged(t *testing.T) {
 	}
 	if len(sink.errors) != 0 {
 		t.Errorf("a surplus part is not an error condition, got %d error logs", len(sink.errors))
+	}
+}
+
+// The opposite mismatch to the test above, which the stamping walk cannot see:
+// it iterates parts, so an entry with no part to stamp is never visited and
+// used to pass unrecorded. That direction is the worse one. The entry's hash
+// still reaches the prefiller, because PreparePrefillECParams flattens every
+// encode response into ec_transfer_params, so the prefill body ends up
+// describing an EC buffer that no part of the decode body names by uuid.
+//
+// Pinning the level is the point of the test, since the whole branch is a log
+// line: DEBUG, the same as the surplus-part branch, so one verbosity shows
+// both directions of the mismatch. The image entry has no part at all, the
+// audio entry has one of its two, and both must be reported; the single video
+// part is a control that a fully paired modality stays quiet.
+func TestInjectUUIDs_EntryWithNoMediaPartIsLogged(t *testing.T) {
+	step := &DecodeStep{}
+	audioPart := map[string]any{"type": "audio_url", "audio_url": map[string]any{"url": "u-aud"}}
+	videoPart := map[string]any{"type": "video_url", "video_url": map[string]any{"url": "u-vid"}}
+
+	reqCtx := &pipeline.RequestContext{
+		Body: map[string]any{
+			"messages": []any{
+				map[string]any{"role": "user", "content": []any{audioPart, videoPart}},
+			},
+		},
+		MultimodalEntries: []pipeline.MultimodalEntry{
+			// One image entry and no image part; two audio entries and one
+			// audio part; one video entry and one video part.
+			{Modality: reqcommon.ModalityImage, Hash: testHashImage},
+			{Modality: reqcommon.ModalityAudio, Hash: testHashAudio},
+			{Modality: reqcommon.ModalityAudio, Hash: testHashAudio + "-2"},
+			{Modality: reqcommon.ModalityVideo, Hash: testHashVideo},
+		},
+	}
+
+	sink := &logCaptureSink{}
+	step.injectUUIDs(reqCtx, logr.New(sink))
+
+	if got := audioPart["uuid"]; got != testHashAudio {
+		t.Errorf("audio[0] uuid = %v, want %v; a surplus entry must not stop the parts that do pair", got, testHashAudio)
+	}
+	if got := videoPart["uuid"]; got != testHashVideo {
+		t.Errorf("video uuid = %v, want %v", got, testHashVideo)
+	}
+
+	// Map iteration order is unspecified, so count the lines rather than
+	// indexing them: image and audio each report, video does not.
+	if len(sink.infos) != 2 {
+		t.Fatalf("expected 2 log lines, one per modality with a surplus entry, got %d", len(sink.infos))
+	}
+	for _, got := range sink.infos {
+		if got.msg != "MultimodalEntry with no media part" {
+			t.Errorf("unexpected log line %q", got.msg)
+		}
+		if got.level != logutil.DEBUG {
+			t.Errorf("surplus entry logged at V(%d), want V(%d)", got.level, logutil.DEBUG)
+		}
+	}
+	if len(sink.errors) != 0 {
+		t.Errorf("a surplus entry degrades rather than fails, got %d error logs", len(sink.errors))
 	}
 }
 
