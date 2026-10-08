@@ -153,9 +153,9 @@ type RequestContext struct {
 	ResponseWriter http.ResponseWriter
 }
 
-// MultimodalEntry describes one downloaded multimodal item (e.g. an image) and
-// where it sits in the tokenized prompt. Modality names the kind of content the
-// item carries; reqcommon.PartModality derives it from the content-part type
+// MultimodalEntry describes one multimodal item in the request and where it
+// sits in the tokenized prompt. Modality names the kind of content the item
+// carries; reqcommon.PartModality derives it from the content-part type
 // for a request that carries parts, and a token-in request's own feature-map
 // key supplies it otherwise. Hash and KwargsData are filled in by the render
 // step; Placeholder marks the span of placeholder tokens the encode step
