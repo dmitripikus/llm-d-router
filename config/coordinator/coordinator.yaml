@@ -273,6 +273,15 @@ pipeline:
         #
         # Inline payloads are bounded on base64 length, before any decode, so an
         # oversized item is rejected without being allocated.
+        #
+        # For an inline payload, server.max_request_body_size binds first and
+        # usually binds lower: the payload arrives base64-encoded in the body,
+        # so its 64 MB default stops a raw payload at 64 x 3/4 = 48 MB whatever
+        # these caps say. A cap above that is reachable on http(s) downloads,
+        # where the client sends only a URL, but not on input_audio or a data:
+        # URI. Raising one of these caps for inline media means raising
+        # max_request_body_size to the encoded size too: 60 MB of audio needs
+        # 80 MB of body, and 200 MB of video needs 267 MB.
         # max_download_size: 10
 
         # max_image_download_size overrides max_download_size for image_url
@@ -286,13 +295,17 @@ pipeline:
         # max_audio_download_size overrides max_download_size for audio_url
         # items. Audio codec decoders historically carry more CVEs than image
         # decoders, so keep this tight until the audio decode path has had a
-        # security review end-to-end.
+        # security review end-to-end. This value is reachable on downloads;
+        # inline audio also needs server.max_request_body_size raised, as the
+        # note on max_download_size explains.
         # max_audio_download_size: 60
 
         # max_video_download_size overrides max_download_size for video_url
         # items. Videos routinely need 100+ MB per clip, so leave it commented
         # out only if the deployment does not accept video. The codec-CVE caveat
-        # on max_audio_download_size applies here too.
+        # on max_audio_download_size applies here too, as does the body-size
+        # one: a video this size is a download, since no default body cap comes
+        # close to holding it inline.
         # max_video_download_size: 200
 
         # allowed_{image,audio,video}_content_types below each REPLACE the
