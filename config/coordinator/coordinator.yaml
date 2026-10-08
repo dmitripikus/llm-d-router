@@ -302,6 +302,13 @@ pipeline:
         # nothing after it is a null value, not an empty list, and the
         # coordinator refuses to start rather than guess which was meant. That
         # is the shape a template renders from an unset variable.
+        #
+        # A list ENTRY that names no type -- empty, whitespace, or only MIME
+        # parameters such as "; charset=utf-8" -- is refused the same way, and
+        # for the same reason: the list would be non-empty, so it would accept
+        # only that entry, which no content type can match, and the modality
+        # would reject every request. That is the opposite of the empty list
+        # above, so it is not a usable way to spell "allow anything".
 
         # allowed_image_content_types overrides the built-in image MIME
         # allowlist. A non-empty list accepts ONLY these types, for image_url
@@ -372,6 +379,10 @@ pipeline:
         # this list is still subject to the IP blocks, so listing "localhost"
         # or an internal hostname does NOT make it reachable unless the
         # resolved IP is also permitted (see allow_private_networks).
+        #
+        # An empty entry is refused at startup, as it is for the content-type
+        # allowlists above: the list would be non-empty and match no host, so
+        # every download would be refused by a line written to permit one.
         # allowed_domains:
         #   - images.example.com
 

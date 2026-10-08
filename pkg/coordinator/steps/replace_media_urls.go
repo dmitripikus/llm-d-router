@@ -713,11 +713,26 @@ func parsePerModalityContentTypes(params map[string]any) (map[reqcommon.Modality
 	return out, overrides, nil
 }
 
-// parseContentTypeSet accepts MIME strings as []any (the YAML decode path) or
-// []string (programmatic callers), returning a set keyed by lowercase MIME. An
-// entry that normalizes to nothing is rejected, for the reason recorded on the
-// check below. fieldName appears only in error messages.
-func parseContentTypeSet(raw any, fieldName string) (map[string]struct{}, error) {
+// parseStringSet accepts list entries as []any (the YAML decode path) or
+// []string (programmatic callers) and returns them as a set, each entry run
+// through normalize so it is stored in the form the lookup compares against.
+// fieldName appears only in error messages.
+//
+// Any other root type is an error rather than a silently disabled allowlist,
+// which would be an open-by-default downgrade of a security control. A null
+// value lands here too, which is what a template renders when its variable is
+// unset.
+//
+// An entry that normalizes to nothing is rejected rather than stored. Every
+// caller normalizes the value it checks before the lookup, and a real value
+// never normalizes to "", so such an entry would sit in the set as a live key
+// that nothing can match: a one-entry list would then reject everything, while
+// the documented empty list accepts everything. Both callers invert that way.
+// A media type arrives either from parseDataURI, which rejects an empty one
+// outright, or from download, which substitutes defaultContentType; a hostname
+// reaches hostAllowed lowercased, and an empty allowlist there means
+// unrestricted. A typo must not flip a control to its opposite in silence.
+func parseStringSet(raw any, fieldName string, normalize func(string) string) (map[string]struct{}, error) {
 	var entries []any
 	switch v := raw.(type) {
 	case []any:
@@ -732,24 +747,24 @@ func parseContentTypeSet(raw any, fieldName string) (map[string]struct{}, error)
 	}
 	set := make(map[string]struct{}, len(entries))
 	for _, e := range entries {
-		mime, ok := e.(string)
+		entry, ok := e.(string)
 		if !ok {
 			return nil, fmt.Errorf("%s entries must be strings, got %T", fieldName, e)
 		}
-		// Same normalization the checked types get, so an entry written with
-		// a parameter attached still matches the bare type it names.
-		normalized := normalizeMediaType(mime)
-		// An entry that normalizes away would key the set at "", which no
-		// normalized Content-Type ever equals, so the modality would reject
-		// every request: the inverse of the empty list's "accept anything".
-		// Rejected at startup for the reason a null value is, since a
-		// templating slip must not flip the control's sense silently.
+		normalized := normalize(entry)
 		if normalized == "" {
-			return nil, fmt.Errorf("%s entries must name a media type, got %q", fieldName, mime)
+			return nil, fmt.Errorf("%s entry %q normalizes to nothing", fieldName, entry)
 		}
 		set[normalized] = struct{}{}
 	}
 	return set, nil
+}
+
+// parseContentTypeSet reads one allowed_<modality>_content_types param. Entries
+// get the normalization the checked types get, so one written with a parameter
+// attached still matches the bare type it names.
+func parseContentTypeSet(raw any, fieldName string) (map[string]struct{}, error) {
+	return parseStringSet(raw, fieldName, normalizeMediaType)
 }
 
 // audioFormatMIME maps OpenAI's input_audio.format values to one canonical
@@ -896,31 +911,10 @@ func (g *addressGuard) hostAllowed(host string) bool {
 	return ok
 }
 
-// parseAllowedDomains accepts a list of hostnames as either []any (the YAML
-// decode path) or []string (programmatic callers). It returns an error on any
-// other type rather than silently disabling the allowlist, which would be an
-// open-by-default downgrade of a security control.
+// parseAllowedDomains reads the allowed_domains param. Entries are lowercased,
+// the form hostAllowed compares against. Case is all that is folded: a
+// hostname never legitimately carries surrounding whitespace, and trimming it
+// here would widen what this guard matches rather than narrow it.
 func parseAllowedDomains(raw any) (map[string]struct{}, error) {
-	var entries []any
-	switch v := raw.(type) {
-	case []any:
-		entries = v
-	case []string:
-		entries = make([]any, len(v))
-		for i, s := range v {
-			entries[i] = s
-		}
-	default:
-		return nil, fmt.Errorf("allowed_domains must be a list of strings, got %T", raw)
-	}
-
-	domains := make(map[string]struct{}, len(entries))
-	for _, e := range entries {
-		host, ok := e.(string)
-		if !ok {
-			return nil, fmt.Errorf("allowed_domains entries must be strings, got %T", e)
-		}
-		domains[strings.ToLower(host)] = struct{}{}
-	}
-	return domains, nil
+	return parseStringSet(raw, "allowed_domains", strings.ToLower)
 }

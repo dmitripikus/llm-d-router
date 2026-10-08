@@ -3020,6 +3020,26 @@ func TestReplaceMediaURLsStep_RejectsEmptyAllowedContentTypeEntry(t *testing.T) 
 	}
 }
 
+// allowed_domains inverts the same way, which is why it shares the parser: an
+// empty set means unrestricted in hostAllowed, so [""] is a live allowlist
+// whose only key no lowercased host equals, and every download would be
+// refused by a line written to permit one. Whitespace-only entries are not
+// covered here: this guard folds case and nothing else, since trimming would
+// widen what it matches.
+func TestReplaceMediaURLsStep_RejectsEmptyAllowedDomainEntry(t *testing.T) {
+	if _, err := NewReplaceMediaURLsStep(nil, map[string]any{
+		"allowed_domains": []any{"example.com", ""},
+	}); err == nil {
+		t.Error("expected construction error for an empty allowed_domains entry")
+	}
+	// A list that is empty outright keeps its documented meaning.
+	if _, err := NewReplaceMediaURLsStep(nil, map[string]any{
+		"allowed_domains": []any{},
+	}); err != nil {
+		t.Errorf("empty allowed_domains must stay unrestricted, got %v", err)
+	}
+}
+
 // Pins the pairing the null case above protects: setting the image allowlist at
 // all, empty list included, turns on the download-path Content-Type check,
 // while leaving it unset keeps the permissive path.
