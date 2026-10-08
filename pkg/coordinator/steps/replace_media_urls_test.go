@@ -2627,6 +2627,22 @@ func TestReplaceMediaURLsStep_InputAudio_AllowlistUsesCanonicalMIME(t *testing.T
 	})
 }
 
+// The companion to the test above: that one pins which MIME a format maps to,
+// this one pins the shape it has to be written in. validateInlineAudio hands
+// audioFormatMIME's value to allowedContentTypeForModality without
+// normalizing it, and that match is by equality, so a value carrying a MIME
+// parameter or any upper case would miss every allowlist entry and refuse its
+// format however the operator wrote the config. Adding such an entry fails
+// here rather than on a request.
+func TestAudioFormatMIMEValuesAreNormalized(t *testing.T) {
+	for format, mime := range audioFormatMIME {
+		if got := normalizeMediaType(mime); got != mime {
+			t.Errorf("audioFormatMIME[%q] = %q, which normalizes to %q; values must be bare lowercase types",
+				format, mime, got)
+		}
+	}
+}
+
 // A bad input_audio LAST in walker order, behind an audio_url that would
 // otherwise be downloaded. The inline checks are local, so they must all run
 // before any download starts, or a request that will be rejected anyway still

@@ -566,10 +566,12 @@ var defaultAllowedContentTypesByModality = map[reqcommon.Modality]map[string]str
 }
 
 // allowedContentTypeForModality reports whether contentType is allowed for
-// modality under the step's allowlist. contentType must already be normalized
-// by normalizeMediaType, as every caller does, so the lookup is a plain map
-// hit. A nil value means the operator opted out
-// (allowed_<modality>_content_types: []) and anything is accepted.
+// modality under the step's allowlist. contentType must be a bare lowercase
+// type, the shape normalizeMediaType produces and the shape the allowlist
+// holds, so the lookup is a plain map hit; a type arriving with a parameter
+// attached or in mixed case would miss every entry. A nil value means the
+// operator opted out (allowed_<modality>_content_types: []) and anything is
+// accepted.
 func (s *ReplaceMediaURLsStep) allowedContentTypeForModality(contentType string, modality reqcommon.Modality) bool {
 	allowed, ok := s.allowedContentTypes[modality]
 	if !ok {
@@ -793,6 +795,11 @@ func parseContentTypeSet(raw any, fieldName string) (map[string]struct{}, error)
 // match OpenAI's chat-completions API; the rest cover formats backends commonly
 // accept. coordinator.yaml's allowed_audio_content_types comment records what
 // one MIME per format means for an operator narrowing that list.
+//
+// Each value must be a bare lowercase type: validateInlineAudio hands it
+// straight to allowedContentTypeForModality, which matches by equality, so a
+// value carrying a MIME parameter would refuse its format however the
+// allowlist is written. TestAudioFormatMIMEValuesAreNormalized pins this.
 var audioFormatMIME = map[string]string{
 	"wav":  "audio/wav",
 	"mp3":  "audio/mpeg",
