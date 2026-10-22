@@ -417,6 +417,19 @@ it is configured. The `team` label shares the fairness ID cardinality bound.
 | `llm_d_epp_qos_inflight_requests` | Gauge | `team` | Requests counted against the concurrency cap. |
 | `llm_d_epp_qos_bucket_tokens` | Gauge | `team` | Token bucket level at its last update. |
 
+### SLO attainment
+
+These metrics are owned by the `slo-attainment-reporter` response plugin and are registered only
+when it is configured. Only requests at a priority with a configured target are counted.
+
+| Full metric name | Type | Labels | Notes |
+|---|---|---|---|
+| `llm_d_epp_slo_requests_total` | Counter | `target_model_name`, `fairness_id`, `priority`, `prompt_bucket`, `path`, `result` | `result` is `compliant`, `ttft_miss`, `tpot_miss`, `ttft_tpot_miss` or `failed`. `path` is `remote`, `local` or `aggregated`. |
+| `llm_d_epp_slo_ttft_seconds` | Histogram | `priority`, `prompt_bucket`, `path` | TTFT of successful scored requests. |
+| `llm_d_epp_slo_tpot_seconds` | Histogram | `priority`, `path` | Mean TPOT of successful scored streaming requests. |
+
+The plugin README carries PromQL for attainment ratios and error-budget burn.
+
 ### Predicted latency and SLO
 
 These metrics are registered and recorded by the `predicted-latency-producer`. They are present

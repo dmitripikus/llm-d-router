@@ -83,6 +83,23 @@ Tuning knobs, all under the `flowControl:` config section:
   rather than being rejected; it sheds only by way of the two limits above. Configure it via
   `usageLimitPolicyPluginRef`.
 
+### Per-team QoS classes
+
+Flow control dispatches by priority band, then by fairness flow within a band. Three plugins layer
+per-team service classes onto that hierarchy:
+
+* `qos-admission` (RequestHeader) maps each team to a class, and each class to a band priority. It
+  enforces the team's commit (a token bucket in weighted tokens per minute), concurrency cap, size
+  caps and daily budget before the request is queued, and moves traffic above the commit one class
+  down. The fairness ID is the team.
+* `program-aware-fairness` with `strategy: las` shares a band between teams by least attained
+  service, divided by the per-team weight `qos-admission` publishes, which defaults to the commit.
+* `slo-attainment-reporter` counts TTFT and TPOT compliance per class, prompt-length bucket and
+  prefill/decode path.
+
+A sample is shipped at
+[`deploy/config/qos-epp-config.yaml`](../../../deploy/config/qos-epp-config.yaml).
+
 ### High Level Architecture
 
 The following diagram illustrates the high-level dependency model and request flow for the system. It shows how
