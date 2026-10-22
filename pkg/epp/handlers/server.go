@@ -257,6 +257,15 @@ func (s *StreamingServer) getOrResolveParser(reqCtx *RequestContext) (fwkrh.Pars
 
 // apiType classifies the request by its path. A request rejected before its
 // headers are copied has no path and classifies as chat completions.
+// FirstTokenTimestamp returns when the first response body bytes were received; zero if none were.
+func (r *RequestContext) FirstTokenTimestamp() time.Time { return r.firstTokenTimestamp }
+
+// ResponseCompleteTimestamp returns when the response completed; zero until it does.
+func (r *RequestContext) ResponseCompleteTimestamp() time.Time { return r.responseCompleteTimestamp }
+
+// ModelServerStreaming reports whether the model server answered with an event stream.
+func (r *RequestContext) ModelServerStreaming() bool { return r.modelServerStreaming }
+
 func (r *RequestContext) apiType() reqcommon.APIType {
 	var headers map[string]string
 	if r.Request != nil {
