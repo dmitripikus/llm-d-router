@@ -62,6 +62,7 @@ func TestFactory_InvalidConfig(t *testing.T) {
 		"zero sweep":         `{"evictionSweepSeconds":0}`,
 		"negative weight":    `{"lasWeightService":-0.1}`,
 		"negative half life": `{"lasHalfLifeSeconds":-1}`,
+		"zero output weight": `{"lasOutputTokenWeight":0}`,
 	}
 	for name, cfg := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -31,11 +31,27 @@ import (
 	eppmetrics "github.com/llm-d/llm-d-router/pkg/epp/metrics"
 )
 
-// Output tokens are weighted ~2x input tokens to reflect their relative cost.
+// Output tokens are weighted ~2x input tokens by default to reflect their relative cost.
 const (
-	weightInputToken  = 1
-	weightOutputToken = 2
+	weightInputToken         = 1
+	defaultWeightOutputToken = 2
 )
+
+// flowWeight returns the fairness weight carried by the queue head, or 1.
+func flowWeight(queue flowcontrol.FlowQueueAccessor) float64 {
+	head := queue.Peek()
+	if head == nil {
+		return 1
+	}
+	req := head.OriginalRequest().InferenceRequest()
+	if req == nil {
+		return 1
+	}
+	if w, ok := fwksched.ReadRequestAttribute[float64](req, FlowWeightKey); ok && w > 0 {
+		return w
+	}
+	return 1
+}
 
 type lasState struct {
 	mu              sync.Mutex
@@ -97,6 +113,9 @@ type LASStrategy struct {
 	weightService   float64
 	weightHeadWait  float64
 	halfLifeSeconds float64
+	// outputTokenWeight is the cost of one output token relative to one input token; 0 selects
+	// defaultWeightOutputToken.
+	outputTokenWeight float64
 
 	state sync.Map // key: program ID (string), value: *lasState
 }
@@ -138,7 +157,7 @@ func (s *LASStrategy) Pick(_ int, queues map[string]QueueInfo) flowcontrol.FlowQ
 			continue
 		}
 
-		service := s.getOrCreateState(id).Service(now, s.halfLifeSeconds)
+		service := s.getOrCreateState(id).Service(now, s.halfLifeSeconds) / flowWeight(qi.Queue)
 		var headWaitMs float64
 		if head := qi.Queue.Peek(); head != nil {
 			headWaitMs = float64(time.Since(head.EnqueueTime()).Milliseconds())
@@ -187,7 +206,11 @@ func (s *LASStrategy) OnCompleted(_ *ProgramMetrics, request *fwksched.Inference
 	}
 	promptTokens := int64(response.Usage.PromptTokens)
 	completionTokens := int64(response.Usage.CompletionTokens)
-	cost := float64(weightInputToken*promptTokens + weightOutputToken*completionTokens)
+	outputWeight := s.outputTokenWeight
+	if outputWeight == 0 {
+		outputWeight = defaultWeightOutputToken
+	}
+	cost := float64(weightInputToken*promptTokens) + outputWeight*float64(completionTokens)
 	id := programIDFor(request)
 	service := s.getOrCreateState(id).AddService(cost, time.Now(), s.halfLifeSeconds)
 	attainedServiceTokens.WithLabelValues(id).Set(service)

@@ -39,6 +39,12 @@ const ProgramAwarePluginType = "program-aware-fairness"
 // stashes the flow-control enqueue timestamp for PreRequest to read back.
 var enqueueTimeAttributeKey = plugin.NewDataKey("enqueue-time", ProgramAwarePluginType)
 
+// FlowWeightKey is the request attribute holding a flow's fairness weight (float64). LAS divides a
+// flow's attained service by the weight of its queue head before comparing flows, so a flow with
+// weight w receives w times the contended share of a weight-1 flow. An absent or non-positive
+// weight reads as 1. Producers set it in RequestHeader, which runs before flow control.
+var FlowWeightKey = plugin.NewDataKey("flow-weight", ProgramAwarePluginType)
+
 type Config struct {
 	Strategy             string  `json:"strategy,omitempty"`
 	EvictionTTLSeconds   float64 `json:"evictionTtlSeconds,omitempty"`
@@ -47,6 +53,9 @@ type Config struct {
 	LASWeightService   float64 `json:"lasWeightService,omitempty"`
 	LASWeightHeadWait  float64 `json:"lasWeightHeadWait,omitempty"`
 	LASHalfLifeSeconds float64 `json:"lasHalfLifeSeconds,omitempty"`
+	// LASOutputTokenWeight is the attained-service cost of one output token relative to one input
+	// token. Keep it equal to the output weight used for quota accounting.
+	LASOutputTokenWeight float64 `json:"lasOutputTokenWeight,omitempty"`
 
 	TurnPriorityTimeWeight        float64 `json:"turnPriorityTimeWeight,omitempty"`
 	TurnPriorityInactivitySeconds float64 `json:"turnPriorityInactivitySeconds,omitempty"`
@@ -60,6 +69,7 @@ func DefaultConfig() Config {
 		LASWeightService:     0.8,
 		LASWeightHeadWait:    0.2,
 		LASHalfLifeSeconds:   60,
+		LASOutputTokenWeight: defaultWeightOutputToken,
 
 		TurnPriorityTimeWeight:        0.05,
 		TurnPriorityInactivitySeconds: 120,
@@ -81,6 +91,9 @@ func (c Config) validate() error {
 	}
 	if c.LASHalfLifeSeconds < 0 {
 		return fmt.Errorf("lasHalfLifeSeconds must be >= 0, got %v", c.LASHalfLifeSeconds)
+	}
+	if c.LASOutputTokenWeight <= 0 {
+		return fmt.Errorf("lasOutputTokenWeight must be > 0, got %v", c.LASOutputTokenWeight)
 	}
 	if c.TurnPriorityTimeWeight < 0 {
 		return fmt.Errorf("turnPriorityTimeWeight must be >= 0, got %v", c.TurnPriorityTimeWeight)

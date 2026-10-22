@@ -47,9 +47,10 @@ func newStrategy(cfg Config) (Strategy, error) {
 	switch cfg.Strategy {
 	case "", "las":
 		return &LASStrategy{
-			weightService:   cfg.LASWeightService,
-			weightHeadWait:  cfg.LASWeightHeadWait,
-			halfLifeSeconds: cfg.LASHalfLifeSeconds,
+			weightService:     cfg.LASWeightService,
+			weightHeadWait:    cfg.LASWeightHeadWait,
+			halfLifeSeconds:   cfg.LASHalfLifeSeconds,
+			outputTokenWeight: cfg.LASOutputTokenWeight,
 		}, nil
 	case turnPriorityStrategyName:
 		return &turnPriorityStrategy{

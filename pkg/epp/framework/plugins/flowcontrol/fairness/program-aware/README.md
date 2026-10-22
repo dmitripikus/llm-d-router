@@ -71,7 +71,13 @@ Requests carrying neither share `default-flow`. Its dispatched count is the sum 
 
 Under `turn-priority`, **session depth**: the count of requests already dispatched for the program, plus the waiting request.
 
-Under `las`, **attained service**, measured as a weighted sum of input and output tokens consumed by the program. Output tokens are weighted twice as much as input tokens to reflect their relative compute cost.
+Under `las`, **attained service**, measured as a weighted sum of input and output tokens consumed by the program. Output tokens are weighted `lasOutputTokenWeight` times an input token (default `2`) to reflect their relative compute cost. When quotas are also charged in weighted tokens, set both weights from the same measured decode-to-prefill cost ratio.
+
+### Weighted LAS
+
+A request may carry a fairness weight in the `FlowWeightKey` request attribute (`float64`), set by a RequestHeader plugin before flow control runs. LAS divides each program's attained service by the weight of its queue head before comparing programs, so under contention a program with weight `w` receives `w` times the share of a weight-1 program. An absent or non-positive weight reads as `1`, which leaves unweighted deployments unchanged. The stored attained service and the `program_aware_attained_service_tokens` gauge stay unweighted.
+
+Attained service is keyed by fairness ID alone, not by priority band, so traffic a program sends at several priorities accrues to one total.
 
 ## Inputs consumed
 
@@ -104,6 +110,7 @@ flowControl:
 | `lasWeightService` | `0.8` | Weight on the inverted attained-service signal. Higher values prioritize underserved programs more aggressively. |
 | `lasWeightHeadWait` | `0.2` | Weight on the head-of-queue age. Acts as a tiebreaker on cold start when programs have equal attained service. |
 | `lasHalfLifeSeconds` | `60` | Wall-clock half-life of attained service. `0` disables decay, making attained service cumulative for the program's lifetime. |
+| `lasOutputTokenWeight` | `2` | Attained-service cost of one output token relative to one input token. Must be `> 0`. |
 | `turnPriorityTimeWeight` | `0.05` | (`turn-priority`) Score contribution per second of head wait, against one point per turn of depth. `turnPriorityTimeWeight * requestTTL` bounds the depth a waiting request can overcome, which at the default is 3 turns. `0` orders on depth alone, with longer head wait breaking ties. |
 | `turnPriorityInactivitySeconds` | `120` | (`turn-priority`) A program idle for longer than this has its next request scored as turn one. `0` disables the inactivity reset. Depth is still lost when the program is evicted after `evictionTtlSeconds`. |
 | `evictionTtlSeconds` | `3600` | A program with no completion in this window is evicted from the metrics map. |

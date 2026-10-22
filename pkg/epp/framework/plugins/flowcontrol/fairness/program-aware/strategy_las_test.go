@@ -138,6 +138,93 @@ func TestLAS_OnCompleted_AccumulatesWeightedCost(t *testing.T) {
 	assert.Equal(t, 200.0, s.getOrCreateState("alpha").Service(time.Now(), 0))
 }
 
+func TestLAS_OnCompleted_UsesConfiguredOutputWeight(t *testing.T) {
+	s := &LASStrategy{outputTokenWeight: 4}
+	req := &fwksched.InferenceRequest{FairnessID: "alpha"}
+	resp := &fwkrc.Response{EndOfStream: true}
+	resp.Usage.PromptTokens = 100
+	resp.Usage.CompletionTokens = 50
+
+	s.OnCompleted(nil, req, resp)
+
+	// cost = 1*100 + 4*50 = 300
+	assert.Equal(t, 300.0, s.getOrCreateState("alpha").Service(time.Now(), 0))
+}
+
+func makeWeightedInfo(id string, headEnqueue time.Time, weight float64) (string, QueueInfo) {
+	id, qi := makeInfo(id, headEnqueue)
+	req := &fwksched.InferenceRequest{FairnessID: id}
+	if weight != 0 {
+		req.PutAttribute(FlowWeightKey, weight)
+	}
+	qi.Queue.(*fwkfcmocks.MockFlowQueueAccessor).PeekV = &fwkfcmocks.MockQueueItemAccessor{
+		EnqueueTimeV:     headEnqueue,
+		OriginalRequestV: &fwkfcmocks.MockFlowControlRequest{InferenceRequestV: req},
+	}
+	return id, qi
+}
+
+func TestLAS_Pick_WeightedService(t *testing.T) {
+	tests := []struct {
+		name         string
+		alphaService float64
+		betaService  float64
+		alphaWeight  float64
+		betaWeight   float64
+		wantPick     string
+	}{
+		{
+			name:         "unweighted prefers lower raw service",
+			alphaService: 500, betaService: 100,
+			wantPick: "beta",
+		},
+		{
+			name:         "weight 10:1 outweighs a 5:1 service lead",
+			alphaService: 500, betaService: 100,
+			alphaWeight: 10, betaWeight: 1,
+			wantPick: "alpha",
+		},
+		{
+			name:         "equal weighted service ties break on head wait",
+			alphaService: 1000, betaService: 100,
+			alphaWeight: 10, betaWeight: 1,
+			wantPick: "alpha",
+		},
+		{
+			name:         "non-positive weight reads as 1",
+			alphaService: 500, betaService: 100,
+			alphaWeight: -3, betaWeight: 0,
+			wantPick: "beta",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &LASStrategy{weightService: 0.8, weightHeadWait: 0.2}
+			now := time.Now()
+			s.getOrCreateState("alpha").AddService(tc.alphaService, now, 0)
+			s.getOrCreateState("beta").AddService(tc.betaService, now, 0)
+
+			idA, qA := makeWeightedInfo("alpha", now.Add(-100*time.Millisecond), tc.alphaWeight)
+			idB, qB := makeWeightedInfo("beta", now, tc.betaWeight)
+
+			got := s.Pick(0, map[string]QueueInfo{idA: qA, idB: qB})
+			require.NotNil(t, got)
+			assert.Equal(t, tc.wantPick, got.FlowKey().ID)
+		})
+	}
+}
+
+func TestLAS_Pick_WeightDoesNotChangeStoredService(t *testing.T) {
+	s := &LASStrategy{weightService: 1.0}
+	now := time.Now()
+	s.getOrCreateState("alpha").AddService(500, now, 0)
+	idA, qA := makeWeightedInfo("alpha", now, 10)
+
+	s.Pick(0, map[string]QueueInfo{idA: qA})
+
+	assert.Equal(t, 500.0, s.getOrCreateState("alpha").Service(now, 0))
+}
+
 func TestLAS_OnCompleted_NilSafe(t *testing.T) {
 	s := &LASStrategy{}
 	s.OnCompleted(nil, nil, &fwkrc.Response{EndOfStream: true})
