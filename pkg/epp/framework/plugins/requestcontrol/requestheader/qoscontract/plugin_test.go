@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package qosadmission
+package qoscontract
 
 import (
 	"context"
@@ -135,7 +135,7 @@ func TestFactory_InvalidConfig(t *testing.T) {
 	}
 }
 
-func TestRequestHeader_AdmitsAtCommittedClass(t *testing.T) {
+func TestRequestHeader_ServesAtCommittedClass(t *testing.T) {
 	p, _ := newTestPlugin(t, nil)
 	req := newRequest("team-a", 100, 50)
 
@@ -210,7 +210,7 @@ func TestRequestHeader_ConcurrencyCapRejects(t *testing.T) {
 
 func TestRequestHeader_OverCommitDowngradesOneClass(t *testing.T) {
 	p, _ := newTestPlugin(t, func(params *Parameters) { params.Teams[0].MaxConcurrency = 0 })
-	// Each reserves 100 + 2*100 = 300; the 1000-token bucket admits three.
+	// Each reserves 100 + 2*100 = 300; the 1000-token bucket covers three.
 	for range 3 {
 		req := newRequest("team-a", 100, 100)
 		require.NoError(t, p.RequestHeader(t.Context(), req))

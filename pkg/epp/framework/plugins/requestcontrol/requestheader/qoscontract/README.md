@@ -1,6 +1,6 @@
-# QoS Admission
+# QoS Contract
 
-**Type:** `qos-admission`
+**Type:** `qos-contract`
 **Interfaces:** `requestcontrol.RequestHeaderProcessor`, `requestcontrol.ResponseHeaderProcessor`, `requestcontrol.ResponseBodyProcessor`, `plugin.ProducerPlugin`
 **Stability:** Alpha
 
@@ -13,13 +13,21 @@ The plugin runs in the RequestHeader phase, before flow control queues the reque
 1. Resolves the team from `teamHeader` (default: the fairness ID header). A missing or unlisted team uses `defaultTeam`.
 2. Rejects with `400` a prompt larger than `maxPromptTokens`, or an output cap larger than `maxOutputTokens`.
 3. Rejects with `429` a request that would exceed the team's `dailyTokens`.
-4. Rejects with `429` a request that would exceed the team's `maxConcurrency`. A slot is held from admission, queueing included, to completion.
+4. Rejects with `429` a request that would exceed the team's `maxConcurrency`. A slot is held from this phase, queueing included, to completion.
 5. Charges the reservation `input + outputTokenWeight * maxOutput` to the team's token bucket. If the bucket cannot cover it, the request moves to the next lower class without a charge. In the lowest class it is rejected with `429`.
 6. Sets the request priority to the served class, sets the fairness ID to the team when no fairness ID was supplied, and publishes the team's fairness weight for `program-aware-fairness`.
 
 At end of stream the reservation is settled against the reported usage: unused tokens are refunded, and usage above the reservation becomes bucket debt. A response with no usage block keeps the reservation as the charge. A request that ends without a response body (a flow-control rejection, a scheduling failure, a client disconnect) is refunded in full when its stream ends.
 
 Input tokens are estimated as request bytes / 4, because tokenization runs after flow control. `maxOutput` is the request's output cap, else the team's `maxOutputTokens`, else `defaultOutputReservation`.
+
+### Why a RequestHeader Plugin
+
+The plugin is not an `Admitter` and does not replace flow-control admission. Both run later in the director: flow control queues and dispatches the request in the band its priority selects, and `Admitter` plugins run after flow control has dispatched it. The contract decision has to come first:
+
+- A downgrade changes the priority, and so the band flow control queues the request in. Only a RequestHeader plugin can still change it.
+- A rejection answers at once. Rejected later, the request would first wait in its band, and its `400` or `429` would arrive only after the queue wait.
+- The concurrency slot counts queued requests, so it is taken before queueing, in the same check that decides the downgrade or rejection.
 
 ## Responses
 
@@ -42,13 +50,13 @@ The plugin publishes `program-aware-fairness`'s `FlowWeightKey`. The value is `w
 
 ## Shadow Mode
 
-With `mode: shadow` every decision is computed and recorded in `llm_d_epp_qos_admission_decisions_total{mode="shadow"}`, but the plugin never rejects, never changes the priority, and adds no response headers. Use it to compare commits against real traffic before enforcing.
+With `mode: shadow` every decision is computed and recorded in `llm_d_epp_qos_contract_decisions_total{mode="shadow"}`, but the plugin never rejects, never changes the priority, and adds no response headers. Use it to compare commits against real traffic before enforcing.
 
 ## Configuration
 
 ```yaml
 plugins:
-- type: qos-admission
+- type: qos-contract
   parameters:
     mode: enforce
     outputTokenWeight: 2
@@ -101,7 +109,7 @@ Configure a flow-control priority band for each class priority, or rely on dynam
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `llm_d_epp_qos_admission_decisions_total` | Counter | `team`, `class`, `served_class`, `decision`, `mode` | Decisions: `admitted`, `downgraded`, `rejected_quota`, `rejected_concurrency`, `rejected_size`, `rejected_daily`. |
+| `llm_d_epp_qos_contract_decisions_total` | Counter | `team`, `class`, `served_class`, `decision`, `mode` | Decisions: `within_contract`, `downgraded`, `rejected_quota`, `rejected_concurrency`, `rejected_size`, `rejected_daily`. |
 | `llm_d_epp_qos_charged_tokens_total` | Counter | `team`, `served_class` | Weighted tokens charged after refunds. Showback. |
 | `llm_d_epp_qos_inflight_requests` | Gauge | `team` | Requests counted against the concurrency cap. |
 | `llm_d_epp_qos_bucket_tokens` | Gauge | `team` | Bucket level at its last update. |

@@ -88,12 +88,12 @@ Tuning knobs, all under the `flowControl:` config section:
 Flow control dispatches by priority band, then by fairness flow within a band. Three plugins layer
 per-team service classes onto that hierarchy:
 
-* `qos-admission` (RequestHeader) maps each team to a class, and each class to a band priority. It
+* `qos-contract` (RequestHeader) maps each team to a class, and each class to a band priority. It
   enforces the team's commit (a token bucket in weighted tokens per minute), concurrency cap, size
   caps and daily budget before the request is queued, and moves traffic above the commit one class
   down. The fairness ID is the team.
 * `program-aware-fairness` with `strategy: las` shares a band between teams by least attained
-  service, divided by the per-team weight `qos-admission` publishes, which defaults to the commit.
+  service, divided by the per-team weight `qos-contract` publishes, which defaults to the commit.
 * `slo-attainment-reporter` counts TTFT and TPOT compliance per class, prompt-length bucket and
   prefill/decode path.
 

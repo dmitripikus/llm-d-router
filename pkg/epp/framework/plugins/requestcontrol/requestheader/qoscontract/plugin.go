@@ -14,11 +14,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package qosadmission provides a RequestHeaderProcessor plugin that enforces per-team QoS
+// Package qoscontract provides a RequestHeaderProcessor plugin that enforces per-team QoS
 // contracts before flow control: it maps a team to a service class (a priority band), applies
 // size caps, a concurrency cap, a committed token rate and a daily budget, and moves traffic
 // above the commit to the next lower class.
-package qosadmission
+package qoscontract
 
 import (
 	"context"
@@ -42,7 +42,7 @@ import (
 
 const (
 	// PluginType is the registered plugin type.
-	PluginType = "qos-admission"
+	PluginType = "qos-contract"
 
 	// ClassHeader reports the class that served the request, or the class a rejection applied to.
 	ClassHeader = "x-llm-d-qos-class"
@@ -57,7 +57,7 @@ const (
 
 	defaultTeamID = "default"
 
-	decisionAdmitted            = "admitted"
+	decisionWithinContract      = "within_contract"
 	decisionDowngraded          = "downgraded"
 	decisionRejectedQuota       = "rejected_quota"
 	decisionRejectedConcurrency = "rejected_concurrency"
@@ -86,8 +86,8 @@ type teamState struct {
 	dailyUsed float64
 }
 
-// admission is the accounting held for one admitted request until it completes.
-type admission struct {
+// hold is the accounting held for one request until it completes.
+type hold struct {
 	team          *teamState
 	servedClass   string
 	reserved      float64
@@ -107,7 +107,7 @@ type Plugin struct {
 	defaultTeam  *teamState
 	now          func() time.Time
 
-	admissions sync.Map // key: RequestID, value: *admission
+	holds sync.Map // key: RequestID, value: *hold
 }
 
 // PluginFactory builds the plugin from its parameters.
@@ -200,7 +200,7 @@ func (p *Plugin) lookupTeam(request *scheduling.InferenceRequest) (string, *team
 	return id, p.defaultTeam
 }
 
-// estimateCost returns the estimated prompt tokens and the weighted cost reserved at admission.
+// estimateCost returns the estimated prompt tokens and the weighted cost reserved for the request.
 // The prompt is estimated from the body size because tokenization runs after flow control.
 func (p *Plugin) estimateCost(request *scheduling.InferenceRequest, cfg TeamConfig) (prompt int64, cost float64) {
 	prompt = int64(request.RequestSizeBytes / fwkrh.BytesPerToken)
@@ -250,7 +250,7 @@ func (p *Plugin) RequestHeader(ctx context.Context, request *scheduling.Inferenc
 		team.mu.Unlock()
 		return p.reject(team, committed.Name, decisionRejectedConcurrency, p.quotaError(team, committed.Name, time.Second, "concurrency limit reached"))
 	}
-	served, decision, charged := committed, decisionAdmitted, false
+	served, decision, charged := committed, decisionWithinContract, false
 	if team.bucket != nil {
 		if team.bucket.tryTake(cost, now) {
 			charged = true
@@ -268,9 +268,9 @@ func (p *Plugin) RequestHeader(ctx context.Context, request *scheduling.Inferenc
 	inflightRequests.WithLabelValues(team.label).Set(float64(team.inflight))
 	team.mu.Unlock()
 
-	admissionDecisions.WithLabelValues(team.label, committed.Name, served.Name, decision, p.mode()).Inc()
-	rec := &admission{team: team, servedClass: served.Name, reserved: cost, bucketCharged: charged}
-	p.admissions.Store(request.RequestID, rec)
+	contractDecisions.WithLabelValues(team.label, committed.Name, served.Name, decision, p.mode()).Inc()
+	rec := &hold{team: team, servedClass: served.Name, reserved: cost, bucketCharged: charged}
+	p.holds.Store(request.RequestID, rec)
 	// A request that never reaches end of stream (flow-control rejection, scheduling failure)
 	// is released in full when its stream ends.
 	requestID := request.RequestID
@@ -292,11 +292,11 @@ func (p *Plugin) ResponseHeader(_ context.Context, request *scheduling.Inference
 	if p.shadow || request == nil || response == nil || response.Headers == nil {
 		return
 	}
-	v, ok := p.admissions.Load(request.RequestID)
+	v, ok := p.holds.Load(request.RequestID)
 	if !ok {
 		return
 	}
-	rec := v.(*admission)
+	rec := v.(*hold)
 	response.Headers[ClassHeader] = rec.servedClass
 	for k, val := range p.quotaHeaders(rec.team) {
 		response.Headers[k] = val
@@ -315,11 +315,11 @@ func (p *Plugin) ResponseBody(_ context.Context, request *scheduling.InferenceRe
 // finish releases a request's concurrency slot and settles its charge exactly once. A nil usage
 // refunds the reservation in full; a usage with no token counts keeps the reservation.
 func (p *Plugin) finish(requestID string, usage *fwkrh.Usage) {
-	v, ok := p.admissions.LoadAndDelete(requestID)
+	v, ok := p.holds.LoadAndDelete(requestID)
 	if !ok {
 		return
 	}
-	rec := v.(*admission)
+	rec := v.(*hold)
 	if rec.stop != nil {
 		rec.stop()
 	}
@@ -356,7 +356,7 @@ func (p *Plugin) mode() string {
 
 // reject records a rejection and returns err, or nil in shadow mode.
 func (p *Plugin) reject(team *teamState, class, decision string, err errcommon.Error) error {
-	admissionDecisions.WithLabelValues(team.label, class, "", decision, p.mode()).Inc()
+	contractDecisions.WithLabelValues(team.label, class, "", decision, p.mode()).Inc()
 	if p.shadow {
 		return nil
 	}

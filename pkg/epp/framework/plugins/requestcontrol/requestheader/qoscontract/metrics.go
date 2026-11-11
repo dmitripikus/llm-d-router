@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package qosadmission
+package qoscontract
 
 import (
 	"errors"
@@ -28,11 +28,11 @@ import (
 )
 
 var (
-	admissionDecisions = prometheus.NewCounterVec(
+	contractDecisions = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Subsystem: eppmetrics.LLMDRouterEndpointPickerSubsystem,
-			Name:      "qos_admission_decisions_total",
-			Help:      metricsutil.HelpMsgWithStability("QoS admission decisions per team, committed class and served class.", compbasemetrics.ALPHA),
+			Name:      "qos_contract_decisions_total",
+			Help:      metricsutil.HelpMsgWithStability("QoS contract decisions per team, committed class and served class.", compbasemetrics.ALPHA),
 		},
 		[]string{"team", "class", "served_class", "decision", "mode"},
 	)
@@ -50,7 +50,7 @@ var (
 		prometheus.GaugeOpts{
 			Subsystem: eppmetrics.LLMDRouterEndpointPickerSubsystem,
 			Name:      "qos_inflight_requests",
-			Help:      metricsutil.HelpMsgWithStability("Requests per team counted against its concurrency cap, from admission to completion.", compbasemetrics.ALPHA),
+			Help:      metricsutil.HelpMsgWithStability("Requests per team counted against its concurrency cap, from the request header to completion.", compbasemetrics.ALPHA),
 		},
 		[]string{"team"},
 	)
@@ -69,13 +69,13 @@ func registerMetrics(registerer prometheus.Registerer) error {
 	if registerer == nil {
 		return nil
 	}
-	for _, collector := range []prometheus.Collector{admissionDecisions, chargedTokens, inflightRequests, bucketTokens} {
+	for _, collector := range []prometheus.Collector{contractDecisions, chargedTokens, inflightRequests, bucketTokens} {
 		if err := registerer.Register(collector); err != nil {
 			var alreadyRegistered prometheus.AlreadyRegisteredError
 			if errors.As(err, &alreadyRegistered) && alreadyRegistered.ExistingCollector == collector {
 				continue
 			}
-			return fmt.Errorf("register qos admission metric: %w", err)
+			return fmt.Errorf("register qos contract metric: %w", err)
 		}
 	}
 	return nil

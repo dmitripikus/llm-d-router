@@ -21,7 +21,7 @@ At end of stream the plugin resolves the request's target from its served priori
 - A target of `0` is not scored.
 - `x-llm-d-slo-ttft-ms` and `x-llm-d-slo-tpot-ms` request headers tighten the configured target for that request, but never loosen it.
 
-Requests at a priority with no target are not counted. List only the priorities that carry a promise. With `qos-admission`, a request downgraded above its team's commit is served at a lower priority, so it falls outside the committed class's attainment.
+Requests at a priority with no target are not counted. List only the priorities that carry a promise. With `qos-contract`, a request downgraded above its team's commit is served at a lower priority, so it falls outside the committed class's attainment.
 
 **Bucket.** The prompt-length bucket comes from the reported `usage.prompt_tokens`, falling back to the tokenized prompt.
 
@@ -32,7 +32,7 @@ Requests at a priority with no target are not counted. List only the priorities 
 
 Report attainment per path as well as combined: a healthy aggregate can hide a breaching remote path behind a fast local share.
 
-Requests rejected before dispatch (`429`, `503`) never produce a response and are not counted here. Count availability from `llm_d_epp_request_error_total`, `llm_d_epp_flow_control_requests_total{outcome}` and `llm_d_epp_qos_admission_decisions_total`.
+Requests rejected before dispatch (`429`, `503`) never produce a response and are not counted here. Count availability from `llm_d_epp_request_error_total`, `llm_d_epp_flow_control_requests_total{outcome}` and `llm_d_epp_qos_contract_decisions_total`.
 
 ## Configuration
 

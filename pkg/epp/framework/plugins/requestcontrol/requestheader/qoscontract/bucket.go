@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package qosadmission
+package qoscontract
 
 import (
 	"math"
@@ -56,7 +56,7 @@ func (b *tokenBucket) tryTake(cost float64, now time.Time) bool {
 }
 
 // adjust adds delta tokens: positive for a refund, negative for a charge above the reservation.
-// The level never exceeds capacity; it may go negative, which delays later admissions.
+// The level never exceeds capacity; it may go negative, which keeps later requests outside the commit until it refills.
 func (b *tokenBucket) adjust(delta float64, now time.Time) {
 	b.refill(now)
 	b.level = math.Min(b.capacity, b.level+delta)

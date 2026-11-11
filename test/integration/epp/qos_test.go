@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	errcommon "github.com/llm-d/llm-d-router/pkg/common/error"
-	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requestcontrol/requestheader/qosadmission"
+	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requestcontrol/requestheader/qoscontract"
 	"github.com/llm-d/llm-d-router/pkg/epp/metadata"
 	"github.com/llm-d/llm-d-router/test/integration"
 )
@@ -59,7 +59,7 @@ func immediateHeader(resp *extProcPb.ProcessingResponse, key string) (string, bo
 	return "", false
 }
 
-func TestQoSAdmission(t *testing.T) {
+func TestQoSContract(t *testing.T) {
 	h := NewTestHarness(t.Context(), t, WithStandardMode(), WithConfigText(qosTestConfig)).WithBaseResources()
 	pods := []PodState{P(0, 0, 0.1, modelMyModelTarget)}
 	h.WithPods(pods).WaitForSync(len(pods), modelMyModel)
@@ -75,10 +75,10 @@ func TestQoSAdmission(t *testing.T) {
 		responses, err := integration.StreamedRequest(t, h.Client, requests, 4)
 		require.NoError(t, err)
 		require.Len(t, responses, 4)
-		class, ok := responseHeader(responses[2], qosadmission.ClassHeader)
+		class, ok := responseHeader(responses[2], qoscontract.ClassHeader)
 		require.True(t, ok, "the served class is reported on the response")
 		require.Equal(t, "batch", class)
-		_, ok = responseHeader(responses[2], qosadmission.ConcurrencyRemainingHeader)
+		_, ok = responseHeader(responses[2], qoscontract.ConcurrencyRemainingHeader)
 		require.True(t, ok)
 	})
 
@@ -93,7 +93,7 @@ func TestQoSAdmission(t *testing.T) {
 		require.Equal(t, envoyTypePb.StatusCode_TooManyRequests, ir.GetStatus().GetCode())
 		reason, _ := immediateHeader(responses[0], errcommon.RequestDroppedReasonHeaderKey)
 		require.Equal(t, string(errcommon.RequestDroppedReasonOverQuota), reason)
-		retry, ok := immediateHeader(responses[0], qosadmission.RetryAfterHeader)
+		retry, ok := immediateHeader(responses[0], qoscontract.RetryAfterHeader)
 		require.True(t, ok)
 		require.NotEmpty(t, retry)
 	})

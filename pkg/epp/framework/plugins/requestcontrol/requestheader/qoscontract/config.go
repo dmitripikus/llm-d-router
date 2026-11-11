@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package qosadmission
+package qoscontract
 
 import (
 	"errors"
@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	// ModeEnforce applies admission decisions.
+	// ModeEnforce applies contract decisions.
 	ModeEnforce = "enforce"
 	// ModeShadow computes and records decisions without acting on them.
 	ModeShadow = "shadow"
@@ -48,7 +48,7 @@ type TeamConfig struct {
 	CommitTokensPerMinute float64 `json:"commitTokensPerMinute,omitempty"`
 	// BurstSeconds sizes the bucket as BurstSeconds of committed rate. Default 30.
 	BurstSeconds float64 `json:"burstSeconds,omitempty"`
-	// MaxConcurrency caps the team's requests from admission to completion. 0 is unlimited.
+	// MaxConcurrency caps the team's requests from the request header to completion. 0 is unlimited.
 	MaxConcurrency int `json:"maxConcurrency,omitempty"`
 	// MaxPromptTokens rejects larger prompts with 400. 0 is unlimited.
 	MaxPromptTokens int64 `json:"maxPromptTokens,omitempty"`
